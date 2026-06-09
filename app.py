@@ -1,0 +1,1707 @@
+"""Survey Response Coder — AI-assisted qualitative coding for open-ended survey data."""
+
+import html as _html
+import os
+import streamlit as st
+import streamlit.components.v1 as _components
+import pandas as pd
+
+_SCROLL_TOP = """<script>
+(function() {
+    function go() {
+        var doc = window.parent.document;
+        var el = doc.querySelector('[data-testid="stMain"]')
+              || doc.querySelector('section.main')
+              || doc.querySelector('.main');
+        if (el) el.scrollTop = 0;
+        window.parent.scrollTo(0, 0);
+    }
+    go();
+    setTimeout(go, 80);
+    setTimeout(go, 200);
+})();
+</script>"""
+
+from sample_data import load_sample
+from providers import suggest_themes, code_responses, split_theme, PROVIDERS, DEFAULT_MODEL, NONE_THEME
+from demo_data import suggest_themes_demo, code_responses_demo
+from analysis import (
+    theme_bar_chart,
+    covariate_heatmap,
+    covariate_stacked_bar,
+    chi_square_summary,
+    top_words_per_theme,
+    detect_covariate_type,
+    theme_over_time_chart,
+    theme_over_time_line,
+    confidence_box_chart,
+    anova_box_chart,
+    anova_summary,
+    anova_posthoc,
+    normality_summary,
+    kruskal_summary,
+    kruskal_posthoc,
+    trend_test_summary,
+    explode_themes,
+    sentiment_distribution_chart,
+    sentiment_by_theme_chart,
+    emotion_distribution_chart,
+    emotion_by_theme_chart,
+    irr_cohen_kappa,
+    irr_krippendorff_alpha,
+)
+from report import generate_notebook
+
+def _quote(text: str) -> None:
+    """Display response text as a blockquote without markdown interpretation."""
+    st.markdown(
+        f'<div style="border-left:3px solid #d0d0d0;padding:0.35em 0.75em;'
+        f'margin:0.2em 0;color:inherit;font-size:0.95em">'
+        f'{_html.escape(str(text))}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+st.set_page_config(
+    page_title="Survey Response Coder",
+    page_icon="📊",
+    layout="wide",
+)
+
+# --- Session state defaults ---
+DEFAULTS = {
+    "step": 1,
+    "df": None,
+    "text_col": None,
+    "covariate_cols": [],
+    "taxonomy": [],
+    "preview_sample": None,
+    "coded_df": None,
+    "user_seeds": "",
+    "provider": "Anthropic",
+    "model": DEFAULT_MODEL["Anthropic"],
+    "api_key": "",
+    "demo_mode": False,       # derived from provider == "Demo Mode"; kept for compatibility
+    "multi_theme": False,
+    "sentiment_enabled": False,
+    "include_valence": False,
+    "include_emotion": False,
+    "irr_sample": None,
+    "irr_labels": {},
+    "irr_pos": 0,
+    "rerun_requested": False,
+    "_rendered_step": -1,
+}
+for k, v in DEFAULTS.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+
+def go_to(step: int):
+    st.session_state.step = step
+    st.session_state._rendered_step = -1  # trigger scroll on next render
+
+
+# --- Sidebar ---
+STEPS = [
+    "1. Load Data",
+    "2. Explore Themes",
+    "3. Refine Taxonomy",
+    "4. Code Responses",
+    "5. Visualize & Analyze",
+]
+
+_ENV_KEY_NAMES = {
+    "Anthropic":    "ANTHROPIC_API_KEY",
+    "OpenAI":       "OPENAI_API_KEY",
+    "Google Gemini": "GEMINI_API_KEY",
+}
+
+with st.sidebar:
+    st.title("Survey Coder")
+    st.caption("AI-assisted qualitative coding for open-ended survey responses")
+    st.divider()
+    for i, label in enumerate(STEPS, 1):
+        if i < st.session_state.step:
+            st.markdown(f"✅ {label}")
+        elif i == st.session_state.step:
+            st.markdown(f"**▶ {label}**")
+        else:
+            st.markdown(f"⬜ {label}")
+    st.divider()
+
+    # ── Demo Mode toggle ───────────────────────────────────────
+    demo_toggle = st.toggle(
+        "Demo Mode",
+        value=st.session_state.demo_mode,
+        help="No API key needed — uses a bundled CFPB dataset with pre-run results.",
+        key="_sidebar_demo_toggle",
+    )
+    if demo_toggle != st.session_state.demo_mode:
+        st.session_state.demo_mode = demo_toggle
+        st.session_state.provider = "Demo Mode" if demo_toggle else "Anthropic"
+        if not demo_toggle:
+            st.session_state.model = DEFAULT_MODEL["Anthropic"]
+        st.session_state.api_key = ""
+        st.session_state.taxonomy = []
+        st.session_state.coded_df = None
+        st.session_state.preview_sample = None
+        st.rerun()
+
+    if demo_toggle:
+        st.info(
+            "**Demo Mode** — shows a pre-run analysis of real CFPB consumer complaints "
+            "using Claude rather than live API calls. Results reflect what live mode would "
+            "produce on this dataset, but won't adapt to your own data or instructions.",
+            icon="🧪",
+        )
+    else:
+        # ── Provider selector ─────────────────────────────────
+        _provider_list = list(PROVIDERS.keys())
+        _provider_labels = {
+            "Anthropic":     "Anthropic (Claude)",
+            "OpenAI":        "OpenAI (GPT)",
+            "Google Gemini": "Google Gemini",
+        }
+        _cur_provider = st.session_state.provider if st.session_state.provider in _provider_list else "Anthropic"
+        selected_provider = st.selectbox(
+            "Provider",
+            options=_provider_list,
+            format_func=lambda p: _provider_labels.get(p, p),
+            index=_provider_list.index(_cur_provider),
+            key="_sidebar_provider",
+        )
+        if selected_provider != st.session_state.provider:
+            st.session_state.provider = selected_provider
+            st.session_state.model = DEFAULT_MODEL[selected_provider]
+            st.session_state.api_key = ""
+            st.session_state.taxonomy = []
+            st.session_state.coded_df = None
+            st.session_state.preview_sample = None
+            st.rerun()
+
+        pinfo = PROVIDERS[selected_provider]
+
+        # ── Model selector ─────────────────────────────────────
+        _model_ids    = [m["id"]    for m in pinfo["models"]]
+        _model_labels = {m["id"]: m["label"] for m in pinfo["models"]}
+        # If the stored model isn't in the list it's a custom ID — map to __custom__
+        _stored_model = st.session_state.model
+        _is_custom = _stored_model not in _model_ids or _stored_model == "__custom__"
+        _cur_model = "__custom__" if _is_custom else _stored_model
+        _cur_custom_text = _stored_model if (_is_custom and _stored_model != "__custom__") else ""
+        selected_model = st.selectbox(
+            "Model",
+            options=_model_ids,
+            format_func=lambda m: _model_labels.get(m, m),
+            index=_model_ids.index(_cur_model),
+        )
+        if selected_model == "__custom__":
+            _custom_id = st.text_input(
+                "Model ID",
+                value=_cur_custom_text,
+                placeholder="e.g. claude-opus-4-8",
+                key="_sidebar_custom_model_id",
+            )
+            _effective_model = _custom_id.strip() if _custom_id.strip() else "__custom__"
+        else:
+            _effective_model = selected_model
+        if _effective_model != st.session_state.model:
+            st.session_state.model = _effective_model
+
+        # ── API key input ──────────────────────────────────────
+        _env_key = os.environ.get(_ENV_KEY_NAMES.get(selected_provider, ""), "")
+        _displayed = st.session_state.api_key or _env_key
+        _entered = st.text_input(
+            "API Key",
+            value=_displayed,
+            type="default",
+            placeholder=f"Paste your {selected_provider} API key here",
+            key="_sidebar_api_key",
+        )
+        if _entered != st.session_state.api_key:
+            st.session_state.api_key = _entered
+
+        _key_ok = bool(_entered)
+        if _key_ok:
+            _display_model = _effective_model if _effective_model != "__custom__" else "your custom model"
+            st.success(f"API key set — ready to use {_display_model}.", icon="⚡")
+        else:
+            if pinfo["free_tier"]:
+                st.info(
+                    f"**Free tier available.** {pinfo['free_tier_note']}  \n"
+                    f"[Get a free API key →]({pinfo['key_url']})",
+                    icon="🎁",
+                )
+            else:
+                st.warning(
+                    f"No API key. [Get one here]({pinfo['key_url']})  \n"
+                    "Or enable **Demo Mode** above — no key needed.",
+                    icon="🔑",
+                )
+
+    st.divider()
+    if st.session_state.step > 1:
+        if st.button("↩ Start Over", use_container_width=True):
+            for k, v in DEFAULTS.items():
+                st.session_state[k] = v
+            st.rerun()
+    st.caption("Powered by AI · Built with Streamlit")
+
+
+# Scroll to top only when navigating to a new step, not on widget re-renders
+if st.session_state._rendered_step != st.session_state.step:
+    _components.html(_SCROLL_TOP, height=1)
+    st.session_state._rendered_step = st.session_state.step
+
+
+# ============================================================
+# STEP 1 — Load Data
+# ============================================================
+if st.session_state.step == 1:
+    st.title("📊 Survey Response Coder")
+
+    st.markdown(
+        """
+**Survey Response Coder** is an AI-assisted tool for qualitative coding of open-ended survey data,
+designed for quantitative UX and market researchers who need to make sense of free-text at scale.
+
+**How it works — 5 steps:**
+
+| Step | What happens |
+|---|---|
+| **1. Load Data** | Upload a CSV/Excel file or use the built-in sample dataset |
+| **2. Explore Themes** | The AI reads your responses and proposes a coding taxonomy |
+| **3. Refine Taxonomy** | Merge, split, or rename themes; preview coding on a sample before committing |
+| **4. Code Responses** | The AI assigns themes — and optionally valence/emotion — to every response |
+| **5. Analyze** | Visualize distributions, explore covariate relationships, run statistical tests |
+        """
+    )
+
+    if not st.session_state.demo_mode and not st.session_state.api_key:
+        st.info(
+            "No API key yet? Toggle **Demo Mode** in the sidebar to walk through the full workflow "
+            "using a bundled sample of real CFPB consumer complaints — no setup required.",
+            icon="🧪",
+        )
+
+    st.divider()
+
+    if st.session_state.demo_mode:
+        st.subheader("Load the demo dataset")
+        st.markdown(
+            "Real consumer complaints from the "
+            "[CFPB Consumer Complaint Database](https://www.consumerfinance.gov/data-research/consumer-complaints/) "
+            "— bundled with the app, no download needed."
+        )
+        if st.button("Load Demo Dataset", use_container_width=True, type="secondary"):
+            st.session_state.df = load_sample(500)
+            st.success("Loaded 500 real CFPB complaints.")
+    else:
+        col_upload, col_sample = st.columns([1, 1], gap="large")
+
+        with col_upload:
+            st.subheader("Upload your own file")
+            uploaded = st.file_uploader("CSV or Excel", type=["csv", "xlsx", "xls"])
+            if uploaded:
+                try:
+                    if uploaded.name.endswith((".xlsx", ".xls")):
+                        df = pd.read_excel(uploaded)
+                    else:
+                        df = pd.read_csv(uploaded)
+                    st.success(f"Loaded {len(df):,} rows · {len(df.columns)} columns")
+                    st.session_state.df = df
+                except Exception as e:
+                    st.error(f"Could not read file: {e}")
+
+        with col_sample:
+            st.subheader("Use the demo dataset")
+            st.markdown(
+                "Real consumer complaints from the "
+                "[CFPB Consumer Complaint Database](https://www.consumerfinance.gov/data-research/consumer-complaints/) "
+                "— bundled with the app, no download needed."
+            )
+            if st.button("Load Demo Dataset", use_container_width=True, type="secondary"):
+                st.session_state.df = load_sample(500)
+                st.success("Loaded 500 real CFPB complaints.")
+
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        st.divider()
+        st.subheader("Preview")
+        st.dataframe(df.head(5), use_container_width=True)
+
+        st.subheader("Configure Columns")
+        text_options = [
+            c for c in df.columns
+            if pd.api.types.is_string_dtype(df[c]) or pd.api.types.is_object_dtype(df[c])
+        ]
+        if not text_options:
+            text_options = list(df.columns)
+
+        default_text = (
+            "consumer_narrative" if "consumer_narrative" in text_options else text_options[0]
+        )
+        text_col = st.selectbox(
+            "Which column contains the open-ended responses?",
+            options=text_options,
+            index=text_options.index(default_text),
+        )
+
+        default_covariates = [
+            c for c in ["product", "company", "state", "date_submitted", "outcome"]
+            if c in df.columns and c != text_col
+        ]
+        covariate_cols = st.multiselect(
+            "Select covariate columns for cross-analysis (optional)",
+            options=[c for c in df.columns if c != text_col],
+            default=default_covariates,
+        )
+
+        n_valid = df[text_col].dropna().str.strip().ne("").sum()
+        st.caption(f"{n_valid:,} non-empty responses in '{text_col}'")
+
+        if st.button("Continue →", type="primary", use_container_width=True):
+            st.session_state.text_col = text_col
+            st.session_state.covariate_cols = covariate_cols
+            go_to(2)
+            st.rerun()
+
+
+# ============================================================
+# STEP 2 — Explore Themes
+# ============================================================
+elif st.session_state.step == 2:
+
+    df = st.session_state.df
+    text_col = st.session_state.text_col
+
+    st.title("🔍 Explore Themes")
+    st.markdown(
+        "The model reads a sample of your responses and builds a coding taxonomy from what it finds. "
+        "You can optionally share your hypotheses below — they'll be treated as research framing, "
+        "not a fixed list."
+    )
+
+    st.subheader("Sample Responses")
+    sample = df[text_col].dropna().sample(min(10, len(df)), random_state=1).tolist()
+    for r in sample:
+        _quote(r)
+
+    st.divider()
+    st.subheader("Your Theme Hypotheses (optional)")
+    st.markdown(
+        "If you have hunches about what themes exist in the data, enter them below — "
+        "**one suspected theme per line**, followed by any keywords or phrases that signal it.\n\n"
+        "**Example format:**\n"
+        "```\n"
+        "Billing errors — duplicate charge, wrong amount, unauthorized fee, refund\n"
+        "Poor customer service — hold time, hung up, rude, no callback, transferred\n"
+        "Fraud — identity theft, account hacked, unauthorized access, police report\n"
+        "```\n"
+        "**In live mode**, the model combines your hunches with what it finds in the data. "
+        "It won't force-fit your suggestions — themes may be merged if they overlap, "
+        "split if one covers too much ground, renamed to better reflect respondents' language, "
+        "or skipped if the data doesn't support them. It may also surface themes you didn't anticipate.\n\n"
+        "_Leave blank to let the model explore the data with no prior framing._"
+    )
+    user_seeds = st.text_area(
+        "Theme hypotheses",
+        value=st.session_state.user_seeds,
+        placeholder="Billing errors — duplicate charge, wrong amount, refund\nPoor customer service — hold time, rude, no callback",
+        height=150,
+        label_visibility="collapsed",
+    )
+    st.session_state.user_seeds = user_seeds
+
+    st.divider()
+    st.subheader("How many themes?")
+    theme_range = st.slider(
+        "Target number of themes (the model picks the optimal count within this range)",
+        min_value=2, max_value=15, value=(5, 8), step=1,
+    )
+    min_themes, max_themes = theme_range
+
+    total_responses = int(df[text_col].dropna().str.strip().ne("").sum())
+    max_cap = min(total_responses, 1200)
+
+    if st.session_state.demo_mode:
+        max_for_taxonomy = max_cap
+    else:
+        st.subheader("Responses to use for taxonomy development")
+        max_for_taxonomy = st.slider(
+            "How many responses should the model read to build the taxonomy?",
+            min_value=min(50, max_cap),
+            max_value=max_cap,
+            value=min(500, max_cap),
+            step=50,
+            help="More responses → better coverage of edge-case themes, but higher cost and longer wait. "
+                 "Responses are randomly sampled so order in your file doesn't bias the result. "
+                 "Hard cap of 1,200 to stay within the model's context window.",
+        )
+        _provider = st.session_state.provider
+        _model = st.session_state.model
+        _pricing = PROVIDERS.get(_provider, {}).get("pricing", {}).get(_model, {})
+        _pricing_url = PROVIDERS.get(_provider, {}).get("pricing_url", "")
+        _pricing_link = f" [Current rates ↗]({_pricing_url})" if _pricing_url else ""
+        if PROVIDERS.get(_provider, {}).get("free_tier"):
+            _cost_note = (
+                f"{_provider} free tier covers up to 1,500 requests/day — "
+                f"taxonomy suggestion and most coding runs will be within the free limit."
+            )
+        elif not _pricing or _model == "__custom__":
+            _cost_note = (
+                f"Cost estimate unavailable for this model. "
+                f"Check{_pricing_link if _pricing_link else ' the provider pricing page'} for current rates."
+            )
+        else:
+            _in_price  = _pricing["input"]
+            _out_price = _pricing["output"]
+            _avg_tok = 100
+            _est = (max_for_taxonomy * _avg_tok / 1_000_000 * _in_price
+                    + 1_500 / 1_000_000 * _out_price)
+            _coding_est_lo = total_responses * _avg_tok / 1_000_000 * _in_price
+            _coding_est_hi = _coding_est_lo * 1.3
+            _cost_note = (
+                f"Each taxonomy run samples {max_for_taxonomy:,} responses: ~\${_est:.3f} per run. "
+                f"Each coding run covers all {total_responses:,} responses: ~\${_coding_est_lo:.2f}–\${_coding_est_hi:.2f} per run. "
+                f"Costs are per run — refining the taxonomy 3× then coding once = 3 taxonomy runs + 1 coding run. "
+                f"Prices may vary.{_pricing_link}"
+            )
+        st.caption(_cost_note)
+
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("← Back"):
+            go_to(1)
+            st.rerun()
+    with col2:
+        _btn_label = "Suggest Themes (Demo) →" if st.session_state.demo_mode else "Suggest Themes →"
+        if st.button(_btn_label, type="primary", use_container_width=True):
+            if not st.session_state.demo_mode and not st.session_state.api_key:
+                st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
+            else:
+                responses = df[text_col].dropna().str.strip().tolist()
+                if st.session_state.demo_mode:
+                    taxonomy = suggest_themes_demo(responses, user_seeds, max_themes=max_themes)
+                else:
+                    with st.spinner("Reading your responses and building a taxonomy..."):
+                        taxonomy = suggest_themes(
+                            st.session_state.provider, st.session_state.model,
+                            st.session_state.api_key or None,
+                            responses, user_seeds,
+                            max_responses=max_for_taxonomy,
+                            min_themes=min_themes, max_themes=max_themes,
+                        )
+                st.session_state.taxonomy = taxonomy
+                st.session_state.preview_sample = None
+                go_to(3)
+                st.rerun()
+
+
+# ============================================================
+# STEP 3 — Refine Taxonomy
+# ============================================================
+elif st.session_state.step == 3:
+
+    df = st.session_state.df
+    text_col = st.session_state.text_col
+
+    st.title("✏️ Refine Your Taxonomy")
+    st.markdown(
+        "Review the taxonomy below and shape it until it fits your research framing. "
+        "You can **edit** names and descriptions directly in the table, **merge** overlapping themes, "
+        "or **split** a theme that covers too much ground. "
+        "Use **Preview** to run a quick test-code on a sample of responses before committing."
+    )
+
+    taxonomy = st.session_state.taxonomy
+
+    # ── Editable table ─────────────────────────────────────────
+    taxonomy_df = pd.DataFrame([
+        {"Theme Name": t["name"], "Description": t["description"]}
+        for t in taxonomy
+    ])
+    edited = st.data_editor(
+        taxonomy_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Theme Name": st.column_config.TextColumn("Theme Name", width="medium"),
+            "Description": st.column_config.TextColumn("Description", width="large"),
+        },
+    )
+
+    def _read_taxonomy(edited_df):
+        """Convert data_editor output back to taxonomy list, preserving examples/keywords."""
+        orig_lookup = {t["name"]: t for t in st.session_state.taxonomy}
+        rows = edited_df.dropna(subset=["Theme Name"])
+        rows = rows[rows["Theme Name"].str.strip() != ""]
+        return [
+            {
+                "name": row["Theme Name"].strip(),
+                "description": str(row.get("Description") or ""),
+                "examples": orig_lookup.get(row["Theme Name"].strip(), {}).get("examples", []),
+                "_keywords": orig_lookup.get(row["Theme Name"].strip(), {}).get("_keywords", []),
+            }
+            for _, row in rows.iterrows()
+        ]
+
+    # ── Merge / Split tools ────────────────────────────────────
+    col_merge, col_split = st.columns(2, gap="large")
+
+    with col_merge:
+        with st.expander("🔀 Merge Themes"):
+            st.caption("Combine two or more overlapping themes into one.")
+            current_names = [t["name"] for t in taxonomy]
+            to_merge = st.multiselect("Select themes to merge", current_names, key="merge_select")
+            merged_name = st.text_input("Name for merged theme", key="merge_name")
+            if st.button("Merge", key="do_merge"):
+                if len(to_merge) < 2:
+                    st.warning("Select at least 2 themes to merge.")
+                elif not merged_name.strip():
+                    st.warning("Enter a name for the merged theme.")
+                else:
+                    current = _read_taxonomy(edited)
+                    merged_examples = []
+                    merged_keywords = []
+                    for t in current:
+                        if t["name"] in to_merge:
+                            merged_examples.extend(t.get("examples", []))
+                            merged_keywords.extend(t.get("_keywords", []))
+                    new_taxonomy = [t for t in current if t["name"] not in to_merge]
+                    new_taxonomy.append({
+                        "name": merged_name.strip(),
+                        "description": f"Combined theme covering: {', '.join(to_merge)}.",
+                        "examples": merged_examples[:3],
+                        "_keywords": merged_keywords,
+                    })
+                    st.session_state.taxonomy = new_taxonomy
+                    st.session_state.preview_sample = None
+                    st.rerun()
+
+    with col_split:
+        with st.expander("✂️ Split a Theme"):
+            st.caption("Divide one theme into two more specific ones.")
+            current_names = [t["name"] for t in taxonomy]
+            to_split = st.selectbox("Theme to split", current_names, key="split_select")
+            new_name_1 = st.text_input("Name for first new theme", key="split_name1")
+            new_name_2 = st.text_input("Name for second new theme", key="split_name2")
+            if st.session_state.demo_mode:
+                st.caption(
+                    "**Demo Mode:** provide keywords so responses can be correctly assigned "
+                    "to each new theme. In live mode, the model handles this automatically."
+                )
+                kw_1 = st.text_input(
+                    "Keywords for first theme (comma-separated)",
+                    key="split_kw1",
+                    placeholder="e.g. wait, hold, slow, hours",
+                )
+                kw_2 = st.text_input(
+                    "Keywords for second theme (comma-separated)",
+                    key="split_kw2",
+                    placeholder="e.g. rude, supervisor, unhelpful, dismissed",
+                )
+            split_label = "Split (Demo)" if st.session_state.demo_mode else "Split with AI"
+            if st.button(split_label, key="do_split"):
+                if not new_name_1.strip() or not new_name_2.strip():
+                    st.warning("Enter names for both new themes.")
+                else:
+                    current = _read_taxonomy(edited)
+                    old_theme = next((t for t in current if t["name"] == to_split), None)
+                    new_taxonomy = [t for t in current if t["name"] != to_split]
+
+                    if st.session_state.demo_mode or not st.session_state.api_key:
+                        examples = old_theme.get("examples", []) if old_theme else []
+                        mid = max(1, len(examples) // 2)
+                        kws_1 = [k.strip().lower() for k in kw_1.split(",") if k.strip()] if st.session_state.demo_mode else []
+                        kws_2 = [k.strip().lower() for k in kw_2.split(",") if k.strip()] if st.session_state.demo_mode else []
+                        new_taxonomy.extend([
+                            {
+                                "name": new_name_1.strip(),
+                                "description": f"Responses related to {new_name_1.strip().lower()}.",
+                                "examples": examples[:mid],
+                                "_keywords": kws_1,
+                            },
+                            {
+                                "name": new_name_2.strip(),
+                                "description": f"Responses related to {new_name_2.strip().lower()}.",
+                                "examples": examples[mid:],
+                                "_keywords": kws_2,
+                            },
+                        ])
+                    else:
+                        # Live: ask the model to generate descriptions + examples
+                        sample_for_split = (
+                            df[df[text_col].notna()][text_col]
+                            .sample(min(30, len(df)), random_state=42)
+                            .tolist()
+                        )
+                        with st.spinner(f"Splitting '{to_split}' with AI..."):
+                            new_themes = split_theme(
+                                st.session_state.provider,
+                                st.session_state.model,
+                                st.session_state.api_key or None,
+                                old_theme or {"name": to_split, "description": ""},
+                                new_name_1.strip(),
+                                new_name_2.strip(),
+                                sample_for_split,
+                            )
+                        new_taxonomy.extend(new_themes)
+
+                    st.session_state.taxonomy = new_taxonomy
+                    st.session_state.preview_sample = None
+                    st.rerun()
+
+    # ── Preview ────────────────────────────────────────────────
+    st.divider()
+    st.subheader("👁 Preview Coding on a Sample")
+    st.markdown(
+        "Run a quick test-code on a sample of responses using the current taxonomy. "
+        "This helps you spot miscoded responses and decide if any themes need further refinement "
+        "before committing to coding all responses. Preview always uses single-theme coding."
+    )
+
+    preview_n = st.slider("Sample size", min_value=10, max_value=60, value=30, step=5)
+    preview_label = "Run Preview (Demo)" if st.session_state.demo_mode else "Run Preview with AI"
+
+    if st.button(preview_label, use_container_width=True):
+        if not st.session_state.demo_mode and not st.session_state.api_key:
+            st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
+        else:
+            current_taxonomy = _read_taxonomy(edited)
+            _valid_mask = df[text_col].notna() & df[text_col].str.strip().ne("")
+            sample_df = (
+                df[_valid_mask]
+                .sample(min(preview_n, _valid_mask.sum()), random_state=99)
+                .reset_index(drop=True)
+            )
+            sample_texts = sample_df[text_col].str.strip().tolist()
+
+            with st.spinner("Coding sample..."):
+                if st.session_state.demo_mode:
+                    results = code_responses_demo(
+                        sample_texts, current_taxonomy,
+                        df=sample_df, progress_callback=None,
+                        multi_theme=False,
+                    )
+                else:
+                    results = code_responses(
+                        st.session_state.provider,
+                        st.session_state.model,
+                        st.session_state.api_key or None,
+                        sample_texts, current_taxonomy,
+                        multi_theme=False,
+                    )
+
+            st.session_state.preview_sample = [
+                {"text": text, "primary_theme": r["themes"][0]}
+                for text, r in zip(sample_texts, results)
+            ]
+            st.rerun()
+
+    if st.session_state.preview_sample:
+        preview_df = pd.DataFrame(st.session_state.preview_sample)
+        theme_counts = preview_df["primary_theme"].value_counts()
+        n_other = (preview_df["primary_theme"] == "Other").sum()
+
+        st.markdown(f"**{len(preview_df)} responses coded** across {preview_df['primary_theme'].nunique()} themes.")
+        if n_other > 0:
+            st.warning(
+                f"{n_other} response(s) coded as 'Other' — these didn't fit any theme. "
+                "Consider adding or broadening a theme to capture them."
+            )
+
+        for theme in theme_counts.index:
+            theme_rows = preview_df[preview_df["primary_theme"] == theme]
+            with st.expander(f"**{theme}** — {len(theme_rows)} responses"):
+                for row in theme_rows.head(5).itertuples():
+                    _quote(row.text)
+                if len(theme_rows) > 5:
+                    st.caption(f"... and {len(theme_rows) - 5} more in this theme")
+
+    # ── Claude's initial examples ──────────────────────────────
+    with st.expander("💡 Example Responses per Theme (from initial suggestion)"):
+        for t in taxonomy:
+            st.markdown(f"**{t['name']}** — *{t['description']}*")
+            for ex in t.get("examples", []):
+                _quote(ex)
+            st.markdown("")
+
+    # ── Navigation ─────────────────────────────────────────────
+    st.divider()
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("← Back"):
+            go_to(2)
+            st.rerun()
+    with col2:
+        if st.button("Finalize Taxonomy & Set Coding Options →", type="primary", use_container_width=True):
+            st.session_state.taxonomy = _read_taxonomy(edited)
+            st.session_state.coded_df = None
+            go_to(4)
+            st.rerun()
+
+
+# ============================================================
+# STEP 4 — Code Responses
+# ============================================================
+elif st.session_state.step == 4:
+
+    df = st.session_state.df
+    text_col = st.session_state.text_col
+    taxonomy = st.session_state.taxonomy
+
+    st.title("⚙️ Code All Responses")
+    theme_names = [t["name"] for t in taxonomy]
+    st.markdown(
+        f"The model will assign one of **{len(theme_names)} themes** to each of your "
+        f"**{len(df):,} responses**."
+    )
+    st.markdown("**Themes:** " + " · ".join(f"`{n}`" for n in theme_names))
+
+    with st.expander("⚙️ Coding Options", expanded=True):
+        multi_theme = st.toggle(
+            "Allow multiple themes per response",
+            value=st.session_state.multi_theme,
+            help="The model assigns up to 3 themes per response ranked by relevance. "
+                 "The first theme is always treated as the primary theme for covariate analysis.",
+        )
+        st.session_state.multi_theme = multi_theme
+
+        sentiment_enabled = st.toggle(
+            "Assign sentiment to each response",
+            value=st.session_state.sentiment_enabled,
+        )
+        st.session_state.sentiment_enabled = sentiment_enabled
+
+        if sentiment_enabled:
+            scol1, scol2 = st.columns(2)
+            with scol1:
+                include_valence = st.checkbox(
+                    "Valence score  (1 = Very Negative → 5 = Very Positive)",
+                    value=st.session_state.include_valence,
+                )
+                st.session_state.include_valence = include_valence
+            with scol2:
+                include_emotion = st.checkbox(
+                    "Emotion label  (Frustrated, Angry, Satisfied, etc.)",
+                    value=st.session_state.include_emotion,
+                )
+                st.session_state.include_emotion = include_emotion
+        else:
+            include_valence = False
+            include_emotion = False
+
+    if st.session_state.coded_df is None:
+        label = "Start Coding (Demo) →" if st.session_state.demo_mode else "Start Coding →"
+        _col1, _col2 = st.columns([1, 4])
+        with _col1:
+            if st.button("← Back", key="step4_back"):
+                go_to(3)
+                st.rerun()
+        with _col2:
+            _start = st.button(label, type="primary", use_container_width=True)
+        if _start:
+            if not st.session_state.demo_mode and not st.session_state.api_key:
+                st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
+                st.stop()
+            responses = df[text_col].fillna("").str.strip().tolist()
+            progress_bar = st.progress(0, text="Starting...")
+
+            def update_progress(pct: float):
+                progress_bar.progress(pct, text=f"Coding responses... {int(pct * 100)}%")
+
+            if st.session_state.demo_mode:
+                results = code_responses_demo(
+                    responses, taxonomy, df=df, progress_callback=update_progress,
+                    multi_theme=multi_theme,
+                    include_valence=include_valence, include_emotion=include_emotion,
+                )
+            else:
+                results = code_responses(
+                    st.session_state.provider,
+                    st.session_state.model,
+                    st.session_state.api_key or None,
+                    responses, taxonomy, progress_callback=update_progress,
+                    multi_theme=multi_theme,
+                    include_valence=include_valence, include_emotion=include_emotion,
+                )
+
+            progress_bar.progress(1.0, text="Done!")
+            coded_df = df.copy()
+            coded_df["theme"] = [" | ".join(r["themes"]) for r in results]
+            coded_df["primary_theme"] = [r["themes"][0] for r in results]
+            coded_df["confidence"] = [r.get("confidence", 0.5) for r in results]
+            if include_valence:
+                coded_df["valence_score"] = [r["score"] for r in results]
+                coded_df["valence_label"] = [r["label"] for r in results]
+            if include_emotion:
+                coded_df["emotion"] = [r["emotion"] for r in results]
+            st.session_state.coded_df = coded_df
+            st.rerun()
+    else:
+        st.success(f"Coding complete — {len(st.session_state.coded_df):,} responses coded.")
+        if st.button("↺ Re-run Coding with New Options", key="step4_rerun"):
+            st.session_state.coded_df = None
+            st.rerun()
+
+    if st.session_state.coded_df is not None:
+        coded_df = st.session_state.coded_df
+        is_multi_theme = coded_df["theme"].str.contains(" | ", regex=False).any()
+        show_cols = (
+            [text_col, "primary_theme"]
+            + (["theme"] if is_multi_theme else [])
+            + (["confidence"] if "confidence" in coded_df.columns else [])
+            + (["valence_score", "valence_label"] if "valence_score" in coded_df.columns else [])
+            + (["emotion"] if "emotion" in coded_df.columns else [])
+        )
+        st.subheader("Spot Check (one per theme)")
+        n_themes = coded_df["primary_theme"].nunique()
+        per_theme = max(1, 10 // n_themes)
+        # Explicit loop avoids pandas groupby/apply dropping the groupby column as index
+        spot = pd.concat([
+            grp[show_cols].sample(min(per_theme, len(grp)), random_state=7)
+            for _, grp in coded_df.groupby("primary_theme")
+        ]).sample(frac=1, random_state=7).reset_index(drop=True)
+        if is_multi_theme:
+            spot = spot.rename(columns={"theme": "theme_list"})
+        st.dataframe(
+            spot,
+            use_container_width=True,
+            hide_index=True,
+            column_config={text_col: st.column_config.TextColumn(width="medium")},
+        )
+        st.caption(
+            "One randomly selected response per theme. "
+            + ("**theme_list** shows all assigned themes; **primary_theme** is used for statistical analysis. " if is_multi_theme else "")
+            + ("**confidence** reflects certainty in the **primary theme** assignment — "
+               "pre-computed signal strength in demo mode, the model's self-reported certainty in live mode: "
+               "1.0 = unambiguous fit, 0.5 = another theme could apply, 0.0 = forced. "
+               "Low-confidence responses are good candidates for manual review."
+               if "confidence" in coded_df.columns else "")
+        )
+
+        # ── Inter-Rater Reliability ────────────────────────────────
+        st.divider()
+        with st.expander("🎯 Inter-Rater Reliability Check"):
+            st.markdown(
+                "Rate a random sample of responses yourself — **without seeing the model's labels** — "
+                "then measure agreement using Cohen's Kappa and Krippendorff's Alpha."
+            )
+            if is_multi_theme:
+                st.info(
+                    "Multi-theme mode is on. IRR is computed on the **primary theme** only — "
+                    "multi-label kappa extensions exist but are non-standard, and primary theme is "
+                    "consistent with how all statistical analysis in this app is done.",
+                    icon="ℹ️",
+                )
+
+            if st.session_state.irr_sample is None:
+                irr_n = st.slider("Responses to rate", 5, 50, 20, step=5, key="irr_n_slider")
+                if irr_n < 10:
+                    st.caption("Fewer than 10 responses gives very noisy estimates — results are illustrative only.")
+                if st.button("Begin Rating", key="irr_start"):
+                    sample_rows = coded_df.sample(min(irr_n, len(coded_df)), random_state=42).reset_index(drop=True)
+                    st.session_state.irr_sample = [
+                        {"text": row[text_col], "model_theme": row["primary_theme"]}
+                        for _, row in sample_rows.iterrows()
+                    ]
+                    st.session_state.irr_labels = {}
+                    st.session_state.irr_pos = 0
+                    st.rerun()
+
+            elif st.session_state.irr_pos < len(st.session_state.irr_sample):
+                irr_sample = st.session_state.irr_sample
+                pos = st.session_state.irr_pos
+                n_total = len(irr_sample)
+
+                st.progress(pos / n_total, text=f"Response {pos + 1} of {n_total}")
+                st.markdown("**Read the full response, then assign the best-fitting theme:**")
+                # Full text — no truncation
+                st.markdown(
+                    f'<div style="border-left:3px solid #d0d0d0;padding:0.5em 0.75em;'
+                    f'margin:0.2em 0 0.8em 0;color:inherit;font-size:0.95em;'
+                    f'white-space:pre-wrap;word-wrap:break-word">'
+                    f'{_html.escape(str(irr_sample[pos]["text"]))}</div>',
+                    unsafe_allow_html=True,
+                )
+
+                theme_names = [t["name"] for t in st.session_state.taxonomy] + [NONE_THEME]
+                prev = st.session_state.irr_labels.get(pos)
+                prev_idx = theme_names.index(prev) if prev in theme_names else None
+
+                choice = st.radio(
+                    "Your theme:",
+                    theme_names,
+                    index=prev_idx,
+                    key=f"irr_radio_{pos}",
+                )
+
+                col_back, col_next = st.columns([1, 3])
+                with col_back:
+                    if pos > 0 and st.button("← Back", key="irr_back"):
+                        st.session_state.irr_pos -= 1
+                        st.rerun()
+                with col_next:
+                    is_last = pos == n_total - 1
+                    if st.button(
+                        "Finish & See Results" if is_last else "Next →",
+                        type="primary",
+                        key="irr_next",
+                    ):
+                        st.session_state.irr_labels[pos] = choice
+                        st.session_state.irr_pos = n_total if is_last else pos + 1
+                        st.rerun()
+
+                if st.button("↩ Start Over", key="irr_reset"):
+                    st.session_state.irr_sample = None
+                    st.session_state.irr_labels = {}
+                    st.session_state.irr_pos = 0
+                    st.rerun()
+
+            else:
+                irr_sample = st.session_state.irr_sample
+                n_total = len(irr_sample)
+                human = [st.session_state.irr_labels.get(i, "Other") for i in range(n_total)]
+                model = [item["model_theme"] for item in irr_sample]
+
+                kappa_r = irr_cohen_kappa(human, model)
+                alpha_r = irr_krippendorff_alpha(human, model)
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("% Agreement", f"{kappa_r['pct_agree']}%")
+                c2.metric("Cohen's Kappa", kappa_r["kappa"])
+                c3.metric("Krippendorff's α", alpha_r["alpha"])
+
+                st.markdown(f"**Interpretation:** {kappa_r['interpretation']} agreement.")
+                st.markdown(
+                    "**Cohen's Kappa** corrects for chance using each rater's individual label frequencies — "
+                    "the standard metric for two-rater categorical agreement. "
+                    "Landis & Koch benchmarks: < 0.20 Slight · 0.20–0.40 Fair · "
+                    "0.40–0.60 Moderate · 0.60–0.80 Substantial · > 0.80 Almost perfect. "
+                    "\n\n"
+                    "**Krippendorff's Alpha** uses pooled label frequencies instead, making it slightly more "
+                    "conservative and generalizable to more than two raters or ordinal/interval scales. "
+                    "For two raters on nominal data the two metrics are usually close; they diverge when one "
+                    "rater's label distribution is very different from the other's. "
+                    "Krippendorff recommends α ≥ 0.80 for reliable conclusions and 0.67–0.80 for tentative ones."
+                )
+
+                mismatches = [(i, item) for i, item in enumerate(irr_sample) if human[i] != model[i]]
+                n_agree = n_total - len(mismatches)
+
+                comparison = pd.DataFrame({
+                    "Response": [item["text"] for item in irr_sample],
+                    "Your Label": human,
+                    "Model Label": model,
+                    "Match": ["✓" if h == m else "✗" for h, m in zip(human, model)],
+                })
+                st.dataframe(
+                    comparison,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={"Response": st.column_config.TextColumn(width="large")},
+                )
+
+                # ── Actionable mismatches ──────────────────────────
+                if mismatches:
+                    st.markdown(f"#### Disagreements ({len(mismatches)} of {n_total})")
+                    # Confusion summary: which theme pairs disagree most
+                    from collections import Counter
+                    pair_counts = Counter(
+                        (human[i], item["model_theme"]) for i, item in enumerate(irr_sample)
+                        if human[i] != item["model_theme"]
+                    )
+                    if pair_counts:
+                        st.markdown("**Most common disagreements** (your label → model label):")
+                        for (h_lbl, m_lbl), cnt in pair_counts.most_common(5):
+                            st.markdown(f"- `{h_lbl}` ↔ `{m_lbl}`: {cnt} response(s)")
+
+                    with st.expander("Review each mismatch"):
+                        for i, item in mismatches:
+                            st.markdown(
+                                f"**Response {i+1}** — You: `{human[i]}` · Model: `{item['model_theme']}`"
+                            )
+                            st.markdown(
+                                f'<div style="border-left:3px solid #f0a0a0;padding:0.4em 0.75em;'
+                                f'margin:0.2em 0 0.6em 0;font-size:0.9em;white-space:pre-wrap">'
+                                f'{_html.escape(str(item["text"]))}</div>',
+                                unsafe_allow_html=True,
+                            )
+
+                    if kappa_r["kappa"] < 0.6:
+                        if st.session_state.demo_mode:
+                            st.info(
+                                "**Low agreement detected.** In live mode you can refine the taxonomy "
+                                "descriptions to clarify boundaries between confused themes, then re-run "
+                                "coding — the updated descriptions are passed directly to the model.",
+                                icon="💡",
+                            )
+                        else:
+                            st.info(
+                                "**Low agreement detected.** Go back to **Step 3 → Refine Taxonomy** and "
+                                "tighten the descriptions for the themes that are being confused — "
+                                "especially the pairs listed above. Clearer boundary descriptions directly "
+                                "improve coding accuracy. Then re-run Step 4.",
+                                icon="💡",
+                            )
+                            if st.button("← Go to Refine Taxonomy", key="irr_goto_step3"):
+                                st.session_state.irr_sample = None
+                                st.session_state.irr_labels = {}
+                                st.session_state.irr_pos = 0
+                                go_to(3)
+                                st.rerun()
+
+                if st.button("↩ Start Over", key="irr_reset_done"):
+                    st.session_state.irr_sample = None
+                    st.session_state.irr_labels = {}
+                    st.session_state.irr_pos = 0
+                    st.rerun()
+
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("← Back"):
+                go_to(3)
+                st.rerun()
+        with col2:
+            if st.button("View Analysis →", type="primary", use_container_width=True):
+                go_to(5)
+                st.rerun()
+
+
+# ============================================================
+# STEP 5 — Visualize & Analyze
+# ============================================================
+elif st.session_state.step == 5:
+    coded_df = st.session_state.coded_df
+    text_col = st.session_state.text_col
+    covariate_cols = st.session_state.covariate_cols
+
+
+
+    st.title("📊 Visualize & Analyze")
+
+    # analysis_df: exploded — used for theme bar chart (includes NONE_THEME so it shows in distribution)
+    # covariate_df: one row per response, NONE_THEME excluded — used for all statistical analysis
+    is_multi = coded_df["theme"].str.contains(" | ", regex=False).any()
+    analysis_df = explode_themes(coded_df) if is_multi else coded_df.copy()
+    covariate_df = coded_df[coded_df["primary_theme"] != NONE_THEME].copy()
+
+    _none_count = (coded_df["primary_theme"] == NONE_THEME).sum()
+
+    # Consistent theme order and color map — derived from analysis_df, excluding NONE_THEME
+    import plotly.express as _px
+    _palette = _px.colors.qualitative.Pastel
+    _by_count = (
+        analysis_df[analysis_df["theme"] != NONE_THEME]["theme"]
+        .value_counts().sort_values()
+    )
+    _theme_color_map = {t: _palette[i % len(_palette)] for i, t in enumerate(_by_count.index)}
+    _theme_order = list(_by_count.index[::-1])  # most common → rarest
+
+    # ── Theme Distribution ──────────────────────────────────────
+    st.subheader("Theme Distribution")
+    if is_multi:
+        st.info(
+            f"Multi-theme coding: chart shows **theme tags** ({len(analysis_df):,}) "
+            f"across {len(coded_df):,} responses. Covariate analysis uses the **primary theme** "
+            f"(most relevant) per response to preserve statistical independence.",
+            icon="ℹ️",
+        )
+    st.plotly_chart(theme_bar_chart(analysis_df, "theme"), use_container_width=True)
+    st.caption(
+        "Each bar shows the number of responses (or theme tags, if multi-theme coding was used) "
+        "assigned to that theme. Percentages are of the total."
+    )
+    if _none_count > 0:
+        st.info(
+            f"**{_none_count} response{'s' if _none_count != 1 else ''} "
+            f"({_none_count / len(coded_df) * 100:.1f}%) were coded as '{NONE_THEME}'** — "
+            "too vague or off-topic to fit any theme. "
+            "These are shown in the distribution above but excluded from all analysis below.",
+            icon="ℹ️",
+        )
+
+    # ── Coding Confidence ───────────────────────────────────────
+    if "confidence" in covariate_df.columns:
+        with st.expander("Coding Confidence"):
+            avg_conf = covariate_df["confidence"].mean()
+            low_n = (covariate_df["confidence"] < 0.5).sum()
+            st.plotly_chart(
+                confidence_box_chart(covariate_df, "primary_theme", color_map=_theme_color_map, theme_order=_theme_order),
+                use_container_width=True,
+            )
+            c1, c2 = st.columns(2)
+            c1.metric("Mean confidence", f"{avg_conf:.2f}")
+            c2.metric("Low-confidence responses (<0.5)", f"{low_n} ({low_n / len(covariate_df) * 100:.1f}%)")
+            st.caption(
+                "Confidence reflects the model's self-assessed certainty that the primary theme is the "
+                "best fit (1.0 = unambiguous, 0.5 = plausible but another theme could apply, "
+                "0.0 = forced fit). "
+                "Low-confidence responses are good candidates to review manually or to re-examine "
+                "whether the taxonomy needs a new theme."
+            )
+
+    # ── Top Words ───────────────────────────────────────────────
+    with st.expander("Top Words per Theme"):
+        words = top_words_per_theme(covariate_df, "primary_theme", text_col, theme_order=_theme_order)
+        cols = st.columns(min(3, len(words)))
+        for i, (theme, word_list) in enumerate(words.items()):
+            with cols[i % len(cols)]:
+                st.markdown(f"**{theme}**")
+                st.markdown(", ".join(word_list))
+        st.caption(
+            "Most frequent non-stopword terms in responses assigned to each theme (by primary theme). "
+            "Useful for validating that theme labels reflect the actual language respondents used."
+        )
+
+    # ── Covariate Analysis ──────────────────────────────────────
+    if covariate_cols:
+        st.divider()
+        st.subheader("Covariate Analysis")
+        st.caption(
+            "All covariate analyses use the **primary theme** per response (the single most relevant theme "
+            "assigned by the model), ensuring each response contributes to exactly one group. "
+            "This preserves the independence assumption required for chi-square, ANOVA, and Kruskal-Wallis."
+        )
+
+        selected_cov = st.selectbox("Select a covariate", covariate_cols)
+        detected = detect_covariate_type(covariate_df[selected_cov])
+        TYPE_LABELS = {
+            "categorical": "Categorical (groups, labels)",
+            "numeric": "Numeric / Continuous",
+            "date": "Date / Time",
+        }
+        cov_type = st.radio(
+            f"Variable type — auto-detected as **{TYPE_LABELS[detected]}**. Override if needed:",
+            options=["categorical", "numeric", "date"],
+            format_func=lambda x: TYPE_LABELS[x],
+            index=["categorical", "numeric", "date"].index(detected),
+            horizontal=True,
+        )
+
+        # ── Categorical ─────────────────────────────────────────
+        if cov_type == "categorical":
+            n_cats = covariate_df[selected_cov].nunique()
+            if n_cats > 15:
+                st.info(
+                    f"'{selected_cov}' has {n_cats} categories — stacked bar shows top 10 by frequency. "
+                    "Use the heatmap to page through all categories."
+                )
+                top_cats = covariate_df[selected_cov].value_counts().head(10).index
+                plot_df = covariate_df[covariate_df[selected_cov].isin(top_cats)].copy()
+            else:
+                plot_df = covariate_df.copy()
+
+            tab1, tab2 = st.tabs(["Stacked Bar", "Heatmap"])
+            with tab1:
+                st.plotly_chart(
+                    covariate_stacked_bar(plot_df, "primary_theme", selected_cov, color_map=_theme_color_map, theme_order=_theme_order),
+                    use_container_width=True,
+                )
+            with tab2:
+                _HMAP_PAGE_SIZE = 10
+                # Order by frequency so page 1 matches the stacked bar's top-10
+                _all_hmap_cats = covariate_df[selected_cov].value_counts().index.tolist()
+                _n_hmap_pages = max(1, (len(_all_hmap_cats) + _HMAP_PAGE_SIZE - 1) // _HMAP_PAGE_SIZE)
+                _hmap_pg_key = f"_hmap_pg_{selected_cov}"
+                if _hmap_pg_key not in st.session_state:
+                    st.session_state[_hmap_pg_key] = 0
+                _hmap_cur = min(st.session_state[_hmap_pg_key], _n_hmap_pages - 1)
+
+                _hmap_cats = _all_hmap_cats[_hmap_cur * _HMAP_PAGE_SIZE : (_hmap_cur + 1) * _HMAP_PAGE_SIZE]
+                _hmap_df = covariate_df[covariate_df[selected_cov].isin(_hmap_cats)]
+
+                st.plotly_chart(
+                    covariate_heatmap(_hmap_df, "primary_theme", selected_cov, theme_order=_theme_order),
+                    use_container_width=True,
+                )
+
+                if _n_hmap_pages > 1:
+                    _hc1, _hc2, _hc3 = st.columns([1, 3, 1])
+                    with _hc1:
+                        if st.button("← Prev", disabled=_hmap_cur == 0, key=f"_hmap_prev_{selected_cov}"):
+                            st.session_state[_hmap_pg_key] = _hmap_cur - 1
+                            st.rerun()
+                    with _hc2:
+                        _hmap_start = _hmap_cur * _HMAP_PAGE_SIZE + 1
+                        _hmap_end = min((_hmap_cur + 1) * _HMAP_PAGE_SIZE, len(_all_hmap_cats))
+                        st.caption(f"Categories {_hmap_start}–{_hmap_end} of {len(_all_hmap_cats)}")
+                    with _hc3:
+                        if st.button("Next →", disabled=_hmap_cur >= _n_hmap_pages - 1, key=f"_hmap_next_{selected_cov}"):
+                            st.session_state[_hmap_pg_key] = _hmap_cur + 1
+                            st.rerun()
+
+            st.subheader(f"Chi-Square Test: Theme × {selected_cov}")
+            stats = chi_square_summary(plot_df, "primary_theme", selected_cov)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Chi² Statistic", stats["chi2"])
+            m2.metric("p-value", stats["p_value"])
+            m3.metric("Degrees of Freedom", stats["dof"])
+            m4.metric("Cramér's V", stats["cramers_v"])
+            if stats["significant"]:
+                strength = (
+                    "weak" if stats["cramers_v"] < 0.1
+                    else "moderate" if stats["cramers_v"] < 0.3
+                    else "strong"
+                )
+                st.success(
+                    f"Statistically significant association between themes and {selected_cov} "
+                    f"(p = {stats['p_value']}). Cramér's V = {stats['cramers_v']} — {strength} effect."
+                )
+            else:
+                st.info(f"No statistically significant association found (p = {stats['p_value']}).")
+            n_cov = len(covariate_cols)
+            if n_cov > 1:
+                bonf_thresh = round(0.05 / n_cov, 4)
+                st.caption(
+                    "**Chi-square test of independence** asks whether the distribution of themes differs "
+                    "significantly across groups of the covariate. A significant result (p < 0.05) means "
+                    "the pattern is unlikely due to chance. **Cramér's V** measures effect size on a 0–1 scale: "
+                    "< 0.1 = negligible, 0.1–0.3 = moderate, > 0.3 = strong. "
+                    f"N = {stats['n']:,} responses.  \n"
+                    f"⚠️ **Multiple comparisons:** you have {n_cov} covariates selected. Testing all at α = 0.05 "
+                    f"gives up to {round(n_cov * 0.05, 2)} expected false positives. "
+                    f"Consider a Bonferroni threshold of **p < {bonf_thresh}** when interpreting all tests together."
+                )
+            else:
+                st.caption(
+                    "**Chi-square test of independence** asks whether the distribution of themes differs "
+                    "significantly across groups of the covariate. A significant result (p < 0.05) means "
+                    "the pattern is unlikely due to chance. **Cramér's V** measures effect size on a 0–1 scale: "
+                    "< 0.1 = negligible, 0.1–0.3 = moderate, > 0.3 = strong. "
+                    f"N = {stats['n']:,} responses."
+                )
+
+        # ── Date / Time ─────────────────────────────────────────
+        elif cov_type == "date":
+            granularity = st.radio(
+                "Time granularity", ["Month", "Week", "Day"], horizontal=True,
+                help="Use coarser granularity when individual periods have fewer than ~20 responses.",
+            )
+            n_periods = covariate_df[selected_cov].pipe(
+                lambda s: pd.to_datetime(s, errors="coerce")
+                .dt.to_period({"Month": "M", "Week": "W", "Day": "D"}[granularity])
+                .nunique()
+            )
+            if n_periods < 3:
+                st.warning(
+                    f"Only {n_periods} {granularity.lower()}(s) of data — try a coarser granularity."
+                )
+
+            tab1, tab2 = st.tabs(["Stacked Area", "Line"])
+            with tab1:
+                st.plotly_chart(
+                    theme_over_time_chart(covariate_df, "primary_theme", selected_cov, granularity,
+                                          color_map=_theme_color_map, theme_order=_theme_order),
+                    use_container_width=True,
+                )
+            with tab2:
+                st.plotly_chart(
+                    theme_over_time_line(covariate_df, "primary_theme", selected_cov, granularity,
+                                         color_map=_theme_color_map, theme_order=_theme_order),
+                    use_container_width=True,
+                )
+            st.caption(
+                "Each point shows what **percentage of responses in that time period** belonged to each theme. "
+                "A rising line means that theme is becoming more prevalent over time; a falling line means less prevalent. "
+                f"Tip: use coarser granularity if any {granularity.lower()} has fewer than ~20 responses, "
+                "as sparse periods produce noisy estimates."
+            )
+
+            st.subheader("Linear Trend Test by Theme")
+            trend_df = trend_test_summary(covariate_df, "primary_theme", selected_cov, granularity)
+            if trend_df.empty:
+                st.warning(f"Need at least 3 {granularity.lower()}s of data to run trend tests.")
+            else:
+                _theme_pos = {t: i for i, t in enumerate(_theme_order)}
+                trend_df = trend_df.sort_values(
+                    "Theme", key=lambda s: s.map(lambda t: _theme_pos.get(t, 999))
+                ).reset_index(drop=True)
+
+                def _trend_flag(row):
+                    if row["Sig."] == "✓" and row["Slope (pp/period)"] > 0:
+                        return "🟢"
+                    if row["Sig."] == "✓" and row["Slope (pp/period)"] < 0:
+                        return "🔴"
+                    return ""
+
+                trend_display = trend_df.copy()
+                trend_display.insert(0, "", trend_display.apply(_trend_flag, axis=1))
+                st.dataframe(trend_display, use_container_width=True, hide_index=True)
+                sig_rising = trend_df[(trend_df["Sig."] == "✓") & (trend_df["Slope (pp/period)"] > 0)]
+                sig_falling = trend_df[(trend_df["Sig."] == "✓") & (trend_df["Slope (pp/period)"] < 0)]
+                if not sig_rising.empty:
+                    rising_names = ", ".join(f"**{t}**" for t in sig_rising["Theme"])
+                    st.success(f"Significantly rising over time: {rising_names}")
+                if not sig_falling.empty:
+                    falling_names = ", ".join(f"**{t}**" for t in sig_falling["Theme"])
+                    st.info(f"Significantly falling over time: {falling_names}")
+                if sig_rising.empty and sig_falling.empty:
+                    st.info("No themes show a statistically significant linear trend at p < 0.05.")
+                st.caption(
+                    "**Slope** is the change in percentage points per time period (positive = rising, "
+                    "negative = falling). **R²** measures how well a straight line fits the trend. "
+                    "**p-value** tests whether the slope is significantly different from zero. "
+                    "Rows are ordered by theme frequency (most common first); "
+                    "🟢 = significant rising trend, 🔴 = significant falling trend. "
+                    "⚠️ Treat as exploratory: time series data can have autocorrelation that inflates "
+                    "significance, and short windows may reflect noise rather than real trends."
+                )
+
+        # ── Numeric / Continuous ─────────────────────────────────
+        elif cov_type == "numeric":
+            st.plotly_chart(
+                anova_box_chart(covariate_df, "primary_theme", selected_cov, color_map=_theme_color_map, theme_order=_theme_order),
+                use_container_width=True,
+            )
+
+            norm = normality_summary(covariate_df, "primary_theme", selected_cov)
+            use_kruskal = norm["recommendation"] == "kruskal"
+
+            with st.expander("Normality check (Shapiro-Wilk per group)"):
+                norm_df = pd.DataFrame(norm["groups"])
+                st.dataframe(norm_df, use_container_width=True, hide_index=True)
+                if norm["any_fail"]:
+                    st.warning(
+                        "One or more groups failed the normality test (p < 0.05). "
+                        "**Kruskal-Wallis** is used instead of ANOVA."
+                    )
+                else:
+                    st.success(
+                        "All testable groups appear normally distributed. "
+                        "**ANOVA** is used."
+                    )
+                st.caption(
+                    "**Shapiro-Wilk** tests whether each group's values are plausibly drawn from a normal "
+                    "distribution. p < 0.05 means normality is rejected for that group. ANOVA assumes "
+                    "normality within groups; Kruskal-Wallis is the nonparametric alternative when that "
+                    "assumption doesn't hold."
+                )
+
+            if use_kruskal:
+                st.subheader(f"Kruskal-Wallis Test: {selected_cov} × Theme")
+                stats = kruskal_summary(covariate_df, "primary_theme", selected_cov)
+                if stats is None:
+                    st.warning("Not enough data per group to run Kruskal-Wallis.")
+                else:
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("H Statistic", stats["h_stat"])
+                    m2.metric("p-value", stats["p_value"])
+                    m3.metric("ε² (Epsilon-squared)", stats["epsilon_squared"])
+                    if stats["significant"]:
+                        strength = (
+                            "small" if stats["epsilon_squared"] < 0.06
+                            else "medium" if stats["epsilon_squared"] < 0.14
+                            else "large"
+                        )
+                        st.success(
+                            f"Significant difference in **{selected_cov}** across themes "
+                            f"(H = {stats['h_stat']}, p = {stats['p_value']}). "
+                            f"ε² = {stats['epsilon_squared']} — {strength} effect size."
+                        )
+                    else:
+                        st.info(
+                            f"No significant difference in {selected_cov} across themes "
+                            f"(p = {stats['p_value']})."
+                        )
+                    st.caption(
+                        "**Kruskal-Wallis** is a nonparametric test of whether the distributions of a "
+                        "numeric variable differ across theme groups — used here because at least one group "
+                        "failed the normality check. It compares median ranks rather than means. "
+                        "**ε² (epsilon-squared)** is the effect size: < 0.06 = small, 0.06–0.14 = medium, "
+                        "> 0.14 = large."
+                    )
+                    if stats["significant"]:
+                        with st.expander("Post-hoc pairwise comparisons"):
+                            st.markdown(
+                                "Bonferroni-corrected pairwise Mann-Whitney U tests — which specific theme "
+                                "pairs drive the significant Kruskal-Wallis result."
+                            )
+                            ph = kruskal_posthoc(covariate_df, "primary_theme", selected_cov)
+                            if not ph.empty:
+                                st.dataframe(ph, use_container_width=True, hide_index=True)
+                                st.caption(
+                                    "Medians (not means) are shown since Kruskal-Wallis is rank-based. "
+                                    "p-values are Bonferroni-adjusted across all "
+                                    f"{len(ph)} pairwise comparisons. **Sig. ✓** means adjusted p < 0.05."
+                                )
+            else:
+                st.subheader(f"One-Way ANOVA: {selected_cov} × Theme")
+                stats = anova_summary(covariate_df, "primary_theme", selected_cov)
+                if stats is None:
+                    st.warning("Not enough data per group to run ANOVA.")
+                else:
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("F Statistic", stats["f_stat"])
+                    m2.metric("p-value", stats["p_value"])
+                    m3.metric("η² (Eta-squared)", stats["eta_squared"])
+                    if stats["significant"]:
+                        strength = (
+                            "small" if stats["eta_squared"] < 0.06
+                            else "medium" if stats["eta_squared"] < 0.14
+                            else "large"
+                        )
+                        st.success(
+                            f"Significant difference in **{selected_cov}** across themes "
+                            f"(F = {stats['f_stat']}, p = {stats['p_value']}). "
+                            f"η² = {stats['eta_squared']} — {strength} effect size."
+                        )
+                    else:
+                        st.info(
+                            f"No significant difference in {selected_cov} across themes "
+                            f"(p = {stats['p_value']})."
+                        )
+                    st.caption(
+                        "**One-way ANOVA** tests whether the mean value of the numeric variable differs "
+                        "significantly across theme groups. **η² (eta-squared)** measures the proportion of "
+                        "variance explained by theme membership: < 0.06 = small, 0.06–0.14 = medium, > 0.14 = large."
+                    )
+                    if stats["significant"]:
+                        with st.expander("Post-hoc pairwise comparisons"):
+                            st.markdown(
+                                "Bonferroni-corrected pairwise Welch t-tests — which specific theme pairs "
+                                "drive the significant ANOVA result."
+                            )
+                            ph = anova_posthoc(covariate_df, "primary_theme", selected_cov)
+                            if not ph.empty:
+                                st.dataframe(ph, use_container_width=True, hide_index=True)
+                                st.caption(
+                                    "p-values are adjusted using Bonferroni correction across all "
+                                    f"{len(ph)} pairwise comparisons. "
+                                    "Welch's t-test (unequal variances) is used for each pair. "
+                                    "**Sig. ✓** means the adjusted p < 0.05."
+                                )
+
+    # ── Valence ─────────────────────────────────────────────────
+    if "valence_score" in covariate_df.columns:
+        st.divider()
+        st.subheader("Valence Analysis")
+        tab1, tab2 = st.tabs(["Overall Distribution", "By Primary Theme"])
+        with tab1:
+            st.plotly_chart(
+                sentiment_distribution_chart(covariate_df, "valence_label"), use_container_width=True
+            )
+        with tab2:
+            st.plotly_chart(
+                sentiment_by_theme_chart(covariate_df, "primary_theme", "valence_score", color_map=_theme_color_map, theme_order=_theme_order),
+                use_container_width=True,
+            )
+        avg = covariate_df["valence_score"].mean()
+        median = covariate_df["valence_score"].median()
+        c1, c2 = st.columns(2)
+        c1.metric("Mean Valence Score", f"{avg:.2f} / 5")
+        c2.metric("Median Valence Score", f"{median:.1f} / 5")
+        st.caption(
+            "Valence is scored on a 1–5 scale: 1 = Very Negative, 2 = Negative, 3 = Neutral, "
+            "4 = Positive, 5 = Very Positive. The 'By Primary Theme' box plot shows the median score "
+            "and spread within each theme group. In complaint datasets, scores are typically skewed negative — "
+            "look for which themes have the most negative or most variable valence rather than absolute values."
+        )
+
+        with st.expander("Statistical Test: Valence Score × Primary Theme"):
+            _val_norm = normality_summary(covariate_df, "primary_theme", "valence_score")
+            _val_use_kruskal = _val_norm["recommendation"] == "kruskal"
+            _val_test_name = "Kruskal-Wallis" if _val_use_kruskal else "One-Way ANOVA"
+            st.markdown(
+                f"Testing whether **valence scores differ significantly across themes** using "
+                f"**{_val_test_name}** (chosen based on normality check below)."
+            )
+
+            with st.expander("Normality check (Shapiro-Wilk per theme group)"):
+                _val_norm_df = pd.DataFrame(_val_norm["groups"])
+                st.dataframe(_val_norm_df, use_container_width=True, hide_index=True)
+                if _val_norm["any_fail"]:
+                    st.warning("One or more groups failed the normality test — using Kruskal-Wallis.")
+                else:
+                    st.success("All groups appear normally distributed — using ANOVA.")
+
+            if _val_use_kruskal:
+                _val_stats = kruskal_summary(covariate_df, "primary_theme", "valence_score")
+                if _val_stats is None:
+                    st.warning("Not enough data per theme group to run Kruskal-Wallis.")
+                else:
+                    _vm1, _vm2, _vm3 = st.columns(3)
+                    _vm1.metric("H Statistic", _val_stats["h_stat"])
+                    _vm2.metric("p-value", _val_stats["p_value"])
+                    _vm3.metric("ε² (Epsilon-squared)", _val_stats["epsilon_squared"])
+                    if _val_stats["significant"]:
+                        _val_strength = (
+                            "small" if _val_stats["epsilon_squared"] < 0.06
+                            else "medium" if _val_stats["epsilon_squared"] < 0.14
+                            else "large"
+                        )
+                        st.success(
+                            f"Significant difference in valence scores across themes "
+                            f"(H = {_val_stats['h_stat']}, p = {_val_stats['p_value']}). "
+                            f"ε² = {_val_stats['epsilon_squared']} — {_val_strength} effect."
+                        )
+                        with st.expander("Post-hoc pairwise comparisons (Bonferroni-corrected Mann-Whitney U)"):
+                            _val_ph = kruskal_posthoc(covariate_df, "primary_theme", "valence_score")
+                            if not _val_ph.empty:
+                                st.dataframe(_val_ph, use_container_width=True, hide_index=True)
+                                st.caption(
+                                    "Medians shown; p-values Bonferroni-adjusted across all pairwise comparisons. "
+                                    "**Sig. ✓** means adjusted p < 0.05."
+                                )
+                    else:
+                        st.info(
+                            f"No significant difference in valence scores across themes "
+                            f"(p = {_val_stats['p_value']})."
+                        )
+                    st.caption(
+                        "**Kruskal-Wallis** tests whether valence score distributions differ across theme groups. "
+                        "**ε²** (epsilon-squared) is the effect size: < 0.06 = small, 0.06–0.14 = medium, > 0.14 = large."
+                    )
+            else:
+                _val_stats = anova_summary(covariate_df, "primary_theme", "valence_score")
+                if _val_stats is None:
+                    st.warning("Not enough data per theme group to run ANOVA.")
+                else:
+                    _vm1, _vm2, _vm3 = st.columns(3)
+                    _vm1.metric("F Statistic", _val_stats["f_stat"])
+                    _vm2.metric("p-value", _val_stats["p_value"])
+                    _vm3.metric("η² (Eta-squared)", _val_stats["eta_squared"])
+                    if _val_stats["significant"]:
+                        _val_strength = (
+                            "small" if _val_stats["eta_squared"] < 0.06
+                            else "medium" if _val_stats["eta_squared"] < 0.14
+                            else "large"
+                        )
+                        st.success(
+                            f"Significant difference in valence scores across themes "
+                            f"(F = {_val_stats['f_stat']}, p = {_val_stats['p_value']}). "
+                            f"η² = {_val_stats['eta_squared']} — {_val_strength} effect."
+                        )
+                        with st.expander("Post-hoc pairwise comparisons (Bonferroni-corrected Welch t-tests)"):
+                            _val_ph = anova_posthoc(covariate_df, "primary_theme", "valence_score")
+                            if not _val_ph.empty:
+                                st.dataframe(_val_ph, use_container_width=True, hide_index=True)
+                                st.caption(
+                                    "p-values Bonferroni-adjusted across all pairwise comparisons. "
+                                    "**Sig. ✓** means adjusted p < 0.05."
+                                )
+                    else:
+                        st.info(
+                            f"No significant difference in valence scores across themes "
+                            f"(p = {_val_stats['p_value']})."
+                        )
+                    st.caption(
+                        "**One-way ANOVA** tests whether mean valence score differs across theme groups. "
+                        "**η²** (eta-squared) is the proportion of variance explained by theme: "
+                        "< 0.06 = small, 0.06–0.14 = medium, > 0.14 = large."
+                    )
+
+    if "emotion" in covariate_df.columns:
+        st.divider()
+        st.subheader("Emotion Analysis")
+        tab1, tab2 = st.tabs(["Overall Distribution", "By Primary Theme"])
+        with tab1:
+            st.plotly_chart(
+                emotion_distribution_chart(covariate_df, "emotion"), use_container_width=True
+            )
+        with tab2:
+            st.plotly_chart(
+                emotion_by_theme_chart(covariate_df, "primary_theme", "emotion", color_map=_theme_color_map, theme_order=_theme_order),
+                use_container_width=True,
+            )
+        st.caption(
+            "Emotion labels reflect the predominant emotional tone of each response as interpreted by the model. "
+            "Emotions are ordered most-negative to most-positive: "
+            "Angry → Frustrated → Disappointed → Worried → Confused → Neutral → Relieved → Satisfied. "
+            "The 'By Primary Theme' bars show each emotion as a **percentage of all responses in that theme** "
+            "(including unlabeled ones), so bars do not sum to 100% — the gap represents responses the model "
+            "did not assign a clear emotion. This makes coverage differences across themes visible."
+        )
+
+        with st.expander("Statistical Test: Emotion Label × Primary Theme"):
+            _emo_clean = covariate_df.dropna(subset=["emotion"])
+            if len(_emo_clean) < 10 or _emo_clean["emotion"].nunique() < 2:
+                st.warning("Not enough labeled responses to run a chi-square test.")
+            else:
+                _emo_stats = chi_square_summary(_emo_clean, "primary_theme", "emotion")
+                st.markdown(
+                    "Testing whether **emotion label distributions differ significantly across themes** "
+                    "using a **chi-square test of independence**."
+                )
+                _em1, _em2, _em3, _em4 = st.columns(4)
+                _em1.metric("Chi² Statistic", _emo_stats["chi2"])
+                _em2.metric("p-value", _emo_stats["p_value"])
+                _em3.metric("Degrees of Freedom", _emo_stats["dof"])
+                _em4.metric("Cramér's V", _emo_stats["cramers_v"])
+                if _emo_stats["significant"]:
+                    _emo_strength = (
+                        "weak" if _emo_stats["cramers_v"] < 0.1
+                        else "moderate" if _emo_stats["cramers_v"] < 0.3
+                        else "strong"
+                    )
+                    st.success(
+                        f"Significant association between emotion labels and primary theme "
+                        f"(p = {_emo_stats['p_value']}). "
+                        f"Cramér's V = {_emo_stats['cramers_v']} — {_emo_strength} effect."
+                    )
+                else:
+                    st.info(
+                        f"No statistically significant association between emotion and theme "
+                        f"(p = {_emo_stats['p_value']})."
+                    )
+                st.caption(
+                    "**Chi-square test of independence** asks whether emotion label frequencies differ "
+                    "across theme groups beyond what chance would produce. "
+                    "**Cramér's V** measures effect size on a 0–1 scale: "
+                    "< 0.1 = negligible, 0.1–0.3 = moderate, > 0.3 = strong. "
+                    f"N = {_emo_stats['n']:,} responses with emotion labels."
+                )
+
+    # ── Download ────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Download")
+    _is_multi = coded_df["theme"].str.contains(" | ", regex=False).any()
+    _drop_cols = ([] if _is_multi else ["theme"]) + [c for c in coded_df.columns if c.startswith("_")]
+    _rename_cols = {"theme": "theme_list"} if _is_multi else {}
+    _download_df = coded_df.drop(columns=_drop_cols).rename(columns=_rename_cols)
+
+    _dl_col1, _dl_col2 = st.columns(2)
+    with _dl_col1:
+        st.download_button(
+            "⬇ Coded Dataset (CSV)",
+            data=_download_df.to_csv(index=False).encode(),
+            file_name="coded_responses.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.caption(
+            "Includes the original data plus: "
+            "`primary_theme`, `confidence`, "
+            + ("`theme_list` (all assigned themes), " if _is_multi else "")
+            + "and `valence_score` / `valence_label` / `emotion` if enabled."
+        )
+    with _dl_col2:
+        _nb_include_valence = "valence_score" in coded_df.columns
+        _nb_include_emotion = "emotion" in coded_df.columns
+        _nb_bytes = generate_notebook(
+            coded_df=_download_df,
+            text_col=st.session_state.text_col,
+            covariate_cols=st.session_state.covariate_cols,
+            taxonomy=st.session_state.taxonomy,
+            include_valence=_nb_include_valence,
+            include_emotion=_nb_include_emotion,
+            theme_order=_theme_order,
+        )
+        st.download_button(
+            "⬇ Analysis Notebook (Jupyter)",
+            data=_nb_bytes,
+            file_name="survey_analysis.ipynb",
+            mime="application/x-ipynb+json",
+            use_container_width=True,
+        )
+        st.caption(
+            "Self-contained Jupyter notebook with all charts and statistical tests. "
+            "The coded dataset is embedded — no external files needed. "
+            "Open in JupyterLab, VS Code, or Google Colab and run top-to-bottom."
+        )
+
+    if st.button("← Back to Coding"):
+        go_to(4)
+        st.rerun()

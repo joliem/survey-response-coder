@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+.DS_Store
+.streamlit/secrets.toml
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Your own data files — not for public repos
+p13n_sample_bex.csv
+*.xlsx
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
