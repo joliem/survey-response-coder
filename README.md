@@ -2,6 +2,10 @@
 
 An AI-assisted qualitative coding tool for open-ended survey responses, built with Streamlit. Upload a dataset, generate a thematic taxonomy from your data, refine it, and code every response — all in a browser-based UI with no programming required.
 
+![Refine taxonomy](screenshots/01%20refine%20taxonomy.png)
+![Theme distribution](screenshots/02%20theme%20distribution.png)
+![Covariate analysis](screenshots/03%20covariate%20analysis.png)
+
 ---
 
 ## What it does
