@@ -114,7 +114,7 @@ def generate_notebook(
         quote_lines = [
             "## Representative Quotes\n",
             "_Verbatim excerpts selected to capture each theme — the prevailing view plus the "
-            "occasional less-common angle. Quotes are copied exactly from responses._\n",
+            "occasional less-common angle._\n",
         ]
         any_quotes = False
         for theme in (theme_order or list(quotes.keys())):

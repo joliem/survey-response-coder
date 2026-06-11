@@ -1,6 +1,7 @@
 """Pre-baked themes and keyword-based coding for Demo Mode (no API key required)."""
 
 import random
+import re
 
 import pandas as pd
 
@@ -408,34 +409,41 @@ def code_responses_demo(
 # Flat list of sentiment-laden keywords, for scoring quote-worthy sentences in demo mode
 _VALENCE_KW = [kw for _, kws in _VALENCE_RULES for kw in kws]
 
+# The demo dataset masks PII as XXXX and dates as XX/XX/XXXX — these read poorly as
+# pull-quotes, so we skip them in demo mode only (real uploaded data is unaffected).
+_REDACTION_RE = re.compile(r"x{3,}|xx/xx", re.IGNORECASE)
+
+
+def _is_redacted(text: str) -> bool:
+    return bool(_REDACTION_RE.search(text))
+
 
 def _demo_best_sentence(text: str, theme_name: str, max_words: int = 40) -> str:
     """Pick the most on-theme / sentiment-laden sentence (keyword-scored), verbatim.
 
-    Biases toward substantive sentences and away from short citation fragments.
+    Skips sentences containing redaction masks (demo data only) and biases toward
+    substantive sentences. Returns "" if no clean, usable sentence exists.
     """
     from quotes import split_sentences
     kws = set(dict(_KEYWORD_RULES).get(theme_name, []))
     kws |= {w.lower() for w in theme_name.split() if len(w) > 3}
     kws |= set(_VALENCE_KW)
-    sents = split_sentences(text)
-    if not sents:
-        words = text.split()
-        return " ".join(words[:max_words]) + ("…" if len(words) > max_words else "")
 
-    # Prefer sentences with enough substance; fall back to all if none qualify
+    sents = [s for s in split_sentences(text) if not _is_redacted(s)]
+    if not sents:
+        return ""
+
+    # Prefer sentences with enough substance; fall back to all clean ones if none qualify
     eligible = [s for s in sents if len(s.split()) >= 8] or sents
 
     def score(s: str) -> float:
         low = s.lower()
         n_words = len(s.split())
         hits = sum(1 for k in kws if k in low)
-        # mild reward for length (substance), capped; penalty for overly long
         length_reward = min(n_words, max_words) / max_words * 0.5
         length_penalty = -2 if n_words > max_words else 0
-        # penalize fragments that are mostly redaction/citation noise
-        noise = low.count("xxxx") + low.count("u.s.c") + low.count("15 usc")
-        return hits + length_reward + length_penalty - 0.25 * noise
+        citation_noise = low.count("u.s.c") + low.count("15 usc")
+        return hits + length_reward + length_penalty - 0.25 * citation_noise
 
     best = max(eligible, key=score)
     words = best.split()
@@ -461,27 +469,27 @@ def select_quotes_demo(theme, candidates, max_representative=3, allow_nuance=Tru
 
     raw_picks = []
     used = set()
-    for c in ranked[:max_representative]:
-        raw_picks.append({
-            "id": c["id"], "role": "representative",
-            "quote": _demo_best_sentence(c["text_full"], theme_name), "reason": "",
-        })
+    # Representatives: walk candidates in confidence order, skipping any with no
+    # clean (non-redacted) sentence, until we have enough.
+    for c in ranked:
+        if len(raw_picks) >= max_representative:
+            break
+        quote = _demo_best_sentence(c["text_full"], theme_name)
+        if not quote:
+            continue
+        raw_picks.append({"id": c["id"], "role": "representative", "quote": quote, "reason": ""})
         used.add(c["id"])
 
     if allow_nuance:
-        dominant = None
         vals = [c.get("valence") for c in ranked if c.get("valence")]
-        if vals:
-            dominant = max(set(vals), key=vals.count)
-        nuance = next(
-            (c for c in ranked if c["id"] not in used and c.get("valence")
-             and c.get("valence") != dominant),
-            None,
-        )
-        if nuance:
-            raw_picks.append({
-                "id": nuance["id"], "role": "nuance",
-                "quote": _demo_best_sentence(nuance["text_full"], theme_name), "reason": "",
-            })
+        dominant = max(set(vals), key=vals.count) if vals else None
+        for c in ranked:
+            if c["id"] in used or not c.get("valence") or c.get("valence") == dominant:
+                continue
+            quote = _demo_best_sentence(c["text_full"], theme_name)
+            if not quote:
+                continue
+            raw_picks.append({"id": c["id"], "role": "nuance", "quote": quote, "reason": ""})
+            break
 
     return finalize_picks(raw_picks, candidates, max_representative, allow_nuance)

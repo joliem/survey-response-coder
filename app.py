@@ -1281,7 +1281,7 @@ elif st.session_state.step == 5:
     st.subheader("Representative Quotes")
     st.caption(
         "Verbatim excerpts that best capture each theme — the prevailing view, plus the occasional "
-        "less-common but meaningful angle. Quotes are copied **exactly** from responses, never paraphrased. "
+        "less-common but meaningful angle. "
         "Selection favors substantive comments that name specific pain points or requests."
     )
 
