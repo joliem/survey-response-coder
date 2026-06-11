@@ -293,18 +293,24 @@ def _openai_client(provider, api_key):
 
 
 def _is_per_day_quota(e) -> bool:
-    """True if a 429 is a per-DAY quota violation (retrying won't help until reset)."""
+    """True if a 429 is a per-DAY quota violation (retrying won't help until reset).
+
+    Scans both the structured error body and the message text, since Gemini's
+    OpenAI-compatible endpoint sometimes only embeds the quota id in the message.
+    """
+    blob = ""
     try:
-        details = e.body.get("error", {}).get("details", [])
-        for d in details:
-            if d.get("@type", "").endswith("QuotaFailure"):
-                for v in d.get("violations", []):
-                    qid = f"{v.get('quotaId', '')}{v.get('quotaMetric', '')}".lower()
-                    if "perday" in qid:
-                        return True
+        body = getattr(e, "body", None)
+        if body:
+            blob += str(body)
     except Exception:
         pass
-    return False
+    try:
+        blob += " " + str(e)
+    except Exception:
+        pass
+    blob = blob.lower()
+    return ("perday" in blob) or ("per day" in blob) or ("requests per day" in blob)
 
 
 def _chat(client, model, system, user, max_tokens=2048, _retries=6):
