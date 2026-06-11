@@ -1018,21 +1018,26 @@ elif st.session_state.step == 4:
 
         # Pre-run advisory: long runs on free hosting risk a session reset that
         # loses in-progress coding — independent of how much quota/credit you have.
-        if not st.session_state.demo_mode and _n_total > 300:
+        _fast_provider = st.session_state.provider in ("OpenAI", "Anthropic")  # paid, high-throughput
+        _warn_threshold = 2000 if _fast_provider else 300
+        if not st.session_state.demo_mode and _n_total > _warn_threshold:
             _batches = (_n_total + 9) // 10
-            _est_min = max(1, round(_batches * 4 / 60))  # ~4s/batch, rough
+            _est_min = max(1, round(_batches * (3 if _fast_provider else 6) / 60))
             _adv = (
-                f"**Sizable run:** ~{_batches:,} requests, roughly **{_est_min}+ min** "
-                "(longer if a free tier rate-throttles it). Free-hosted apps can reset the session "
-                "during a long run, which loses in-progress coding — the **Resume** checkpoint "
-                "survives an in-app error, but **not** a full page/session reset. "
+                f"**Sizable run:** ~{_batches:,} requests, roughly **{_est_min}+ min**. "
+                "Free-hosted apps can reset the session during a long run, which loses in-progress "
+                "coding — the **Resume** checkpoint survives an in-app error, but **not** a full "
+                "page/session reset, so avoid refreshing the tab while it runs. "
             )
-            if st.session_state.provider == "Google Gemini":
-                _adv += "On Gemini's free tier it may also exceed today's daily request cap. "
-            _adv += (
-                "For a smooth run: use a fast paid model (e.g. **GPT-4o-mini**), code a **smaller "
-                "subset**, or split the dataset into chunks."
-            )
+            if _fast_provider:
+                _adv += "Consider splitting very large datasets into chunks."
+            else:
+                if st.session_state.provider == "Google Gemini":
+                    _adv += "On Gemini's free tier it may also exceed today's daily request cap. "
+                _adv += (
+                    "For a smoother run: use a fast paid model (e.g. **GPT-4o-mini**), code a "
+                    "**smaller subset**, or split the dataset into chunks."
+                )
             st.warning(_adv, icon="⏱️")
 
         _col1, _col2 = st.columns([1, 4])
