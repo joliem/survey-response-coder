@@ -24,7 +24,7 @@ def _get_ip():
         if "headers_logged" not in st.session_state:
             st.session_state.headers_logged = True
             _track_raw({"event": "_debug_headers", "session_id": _get_session_id(),
-                        "headers": str({k: v for k, v in headers.items()})})
+                        "debug": str({k: v for k, v in headers.items()})})
         for key in ("Cf-Connecting-Ip", "X-Forwarded-For", "X-Real-Ip", "Forwarded", "Remote-Addr", "Client-Ip"):
             val = headers.get(key) or headers.get(key.lower())
             if val:
