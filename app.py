@@ -160,14 +160,22 @@ def _friendly_api_error(e, provider: str = "") -> str:
     name = type(e).__name__
     status = getattr(e, "status_code", None)
     prov = provider or "Your provider"
+    model = st.session_state.get("model", "")
     if name == "RateLimitError" or status == 429:
         msg = f"**Rate limit or quota reached** — {prov} stopped accepting requests.\n\n"
         if provider == "Google Gemini":
-            msg += (
-                "On Gemini's **free tier** this is usually the **daily request cap**, which resets "
-                "around midnight Pacific. To finish now, switch in the sidebar to **Gemini 2.5 Flash** "
-                "(a much larger free daily allowance than Flash Lite) or to a paid model, then run coding again."
-            )
+            msg += "On Gemini's **free tier** this is the **daily request cap**, which resets around midnight Pacific. "
+            if model == "gemini-2.5-flash-lite":
+                msg += (
+                    "Switch in the sidebar to **Gemini 2.5 Flash** (a larger free daily allowance) or to "
+                    "a paid model, then run coding again."
+                )
+            else:
+                msg += (
+                    "You're already on Gemini's most generous free model, so free quota likely isn't "
+                    "enough for this dataset today. Either wait for the daily reset, or switch to a paid "
+                    "model — OpenAI **GPT-4o-mini** is fast and only a few cents for a full run — then run again."
+                )
         else:
             msg += (
                 "This can mean a per-minute rate limit, an exhausted daily quota, or no remaining "
