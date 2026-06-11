@@ -66,8 +66,8 @@ Upload a CSV or Excel file with at least one column of open-ended text responses
 | Provider | Models | Free tier |
 |---|---|---|
 | Anthropic | Claude Opus 4.8, Sonnet 4.6, Haiku 4.5 | No |
-| OpenAI | GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano, GPT-4o | No |
-| Google Gemini | Gemini 2.5 Flash, 2.5 Flash Lite, 2.5 Pro, 2.0 Flash | Yes (2.5 Flash / Lite) |
+| OpenAI | GPT-4.1, GPT-4.1 mini, GPT-4.1 nano | No |
+| Google Gemini | Gemini 2.5 Pro, 2.5 Flash, 2.5 Flash Lite | Yes (2.5 Flash / Lite) |
 
 All models share the same workflow. Use the "Other (enter model ID)…" option in the dropdown to try models not listed.
 
@@ -77,7 +77,7 @@ All models share the same workflow. Use the "Other (enter model ID)…" option i
 
 Costs depend on dataset size, model, and number of iterations. As a rough guide for a 2,000-response dataset:
 
-- **GPT-4o Mini**: ~$0.02 per coding run — fast, and the most reliable choice for full datasets
+- **GPT-4.1 nano**: ~$0.02 per coding run — fast and cheap, a reliable choice for full datasets
 - **Claude Haiku 4.5**: ~$0.03 per coding run
 - **Gemini (free tier)**: great for generating the taxonomy and coding small / test runs (a few hundred responses), but free daily request caps make it unsuitable for coding large datasets — use a paid model for those
 

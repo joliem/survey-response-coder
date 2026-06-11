@@ -14,14 +14,20 @@ def _style(fig: go.Figure) -> go.Figure:
     return fig
 
 
-def theme_bar_chart(df: pd.DataFrame, theme_col: str) -> go.Figure:
+def theme_bar_chart(df: pd.DataFrame, theme_col: str, color_map: dict | None = None,
+                    total: int | None = None) -> go.Figure:
     counts = df[theme_col].value_counts().reset_index()
     counts.columns = ["Theme", "Count"]
-    counts["Pct"] = (counts["Count"] / counts["Count"].sum() * 100).round(1)
+    denom = total if total else counts["Count"].sum()
+    counts["Pct"] = (counts["Count"] / denom * 100).round(1)
     counts["Label"] = counts.apply(lambda r: f"{r['Count']} ({r['Pct']}%)", axis=1)
     counts = counts.sort_values("Count")  # ascending so largest ends up at top
 
-    palette = px.colors.qualitative.Pastel
+    if color_map:
+        bar_colors = [color_map.get(t, "#c9c9c9") for t in counts["Theme"]]
+    else:
+        palette = px.colors.qualitative.Pastel
+        bar_colors = [palette[i % len(palette)] for i in range(len(counts))]
     fig = go.Figure(go.Bar(
         x=counts["Count"],
         y=counts["Theme"],
@@ -29,7 +35,7 @@ def theme_bar_chart(df: pd.DataFrame, theme_col: str) -> go.Figure:
         text=counts["Label"],
         textposition="outside",
         textfont=dict(size=15),
-        marker_color=[palette[i % len(palette)] for i in range(len(counts))],
+        marker_color=bar_colors,
     ))
     fig.update_layout(
         title="Theme Distribution",

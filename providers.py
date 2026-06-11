@@ -14,10 +14,8 @@ PROVIDERS = {
         "label": "Anthropic (Claude)",
         "models": [
             {"id": "claude-opus-4-8",    "label": "Claude Opus 4.8   (most capable)"},
-            {"id": "claude-opus-4-7",    "label": "Claude Opus 4.7"},
-            {"id": "claude-opus-4-6",    "label": "Claude Opus 4.6"},
-            {"id": "claude-sonnet-4-6",  "label": "Claude Sonnet 4.6 (recommended)"},
-            {"id": "claude-haiku-4-5",   "label": "Claude Haiku 4.5  (fast & affordable)"},
+            {"id": "claude-sonnet-4-6",  "label": "Claude Sonnet 4.6 (balanced)"},
+            {"id": "claude-haiku-4-5",   "label": "Claude Haiku 4.5  (fastest · cheapest)"},
             _CUSTOM,
         ],
         "free_tier": False,
@@ -38,11 +36,9 @@ PROVIDERS = {
     "OpenAI": {
         "label": "OpenAI (GPT)",
         "models": [
-            {"id": "gpt-4.1",      "label": "GPT-4.1      (recommended)"},
-            {"id": "gpt-4.1-mini", "label": "GPT-4.1 Mini (fast & affordable)"},
-            {"id": "gpt-4.1-nano", "label": "GPT-4.1 Nano (fastest)"},
-            {"id": "gpt-4o",       "label": "GPT-4o"},
-            {"id": "gpt-4o-mini",  "label": "GPT-4o Mini"},
+            {"id": "gpt-4.1",      "label": "GPT-4.1      (most capable)"},
+            {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini (balanced)"},
+            {"id": "gpt-4.1-nano", "label": "GPT-4.1 nano (fastest · cheapest)"},
             _CUSTOM,
         ],
         "free_tier": False,
@@ -61,19 +57,18 @@ PROVIDERS = {
     "Google Gemini": {
         "label": "Google Gemini",
         "models": [
-            {"id": "gemini-2.5-pro",        "label": "Gemini 2.5 Pro       (most capable · paid)"},
-            {"id": "gemini-2.5-flash",      "label": "Gemini 2.5 Flash     (free · best for taxonomy + small runs)"},
-            {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite (free · smallest daily limit)"},
-            {"id": "gemini-2.0-flash",      "label": "Gemini 2.0 Flash     (paid)"},
+            {"id": "gemini-2.5-pro",        "label": "Gemini 2.5 Pro       (most capable)"},
+            {"id": "gemini-2.5-flash",      "label": "Gemini 2.5 Flash     (balanced · free, larger daily cap)"},
+            {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite (fastest · free, smallest daily cap)"},
             _CUSTOM,
         ],
         "free_tier": True,
         "free_tier_note": (
             "Great for the **taxonomy step** and **small / test runs** (a few hundred responses). "
-            "**2.5 Flash** has the largest free daily allowance, **Flash Lite** the smallest. For "
+            "**2.5 Flash** has the larger free daily allowance, **Flash Lite** the smaller. For "
             "**full coding of larger datasets**, free daily caps and free-hosting time limits make a "
-            "paid model (e.g. OpenAI GPT-4o-mini — fast, a few cents) far more reliable. "
-            "2.5 Pro and 2.0 Flash require billing."
+            "paid model (e.g. OpenAI GPT-4.1 nano/mini — fast, a few cents) far more reliable. "
+            "2.5 Pro requires billing."
         ),
         "key_env": "GEMINI_API_KEY",
         "key_url": "https://aistudio.google.com/app/apikey",
@@ -260,13 +255,21 @@ def _code_anthropic(model, api_key, responses, taxonomy, batch_size,
     for batch_num, start in enumerate(range(0, len(responses), batch_size)):
         batch = responses[start:start + batch_size]
         numbered = "\n\n".join(f"{i+1}. {r}" for i, r in enumerate(batch))
-        msg = client.messages.create(
-            model=model, max_tokens=4096,
-            system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": f"Code these {len(batch)} responses:\n\n{numbered}"}],
-        )
         before = len(results)
-        _parse_batch(msg.content[0].text, results)
+        # Retry the batch on parse failure; roll back partial appends. Never skips responses.
+        for _attempt in range(3):
+            try:
+                msg = client.messages.create(
+                    model=model, max_tokens=4096,
+                    system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
+                    messages=[{"role": "user", "content": f"Code these {len(batch)} responses:\n\n{numbered}"}],
+                )
+                _parse_batch(msg.content[0].text, results)
+                break
+            except (ValueError, SyntaxError, KeyError, TypeError):
+                del results[before:]
+                if _attempt == 2:
+                    raise
         if on_batch:
             on_batch(results[before:])
         if progress_callback:
@@ -315,18 +318,19 @@ def _is_per_day_quota(e) -> bool:
     return ("perday" in blob) or ("per day" in blob) or ("requests per day" in blob)
 
 
-def _chat(client, model, system, user, max_tokens=2048, _retries=6):
+def _chat(client, model, system, user, max_tokens=2048, _retries=6, response_format=None):
     import time
     from openai import RateLimitError, InternalServerError
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": user})
+    kwargs = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    if response_format is not None:
+        kwargs["response_format"] = response_format
     for attempt in range(_retries):
         try:
-            resp = client.chat.completions.create(
-                model=model, max_tokens=max_tokens, messages=messages
-            )
+            resp = client.chat.completions.create(**kwargs)
             return resp.choices[0].message.content
         except (RateLimitError, InternalServerError) as e:
             # Daily quota exhausted — retrying wastes minutes for nothing; fail now.
@@ -369,16 +373,30 @@ def _code_openai_compat(provider, model, api_key, responses, taxonomy, batch_siz
                         progress_callback, multi_theme, include_valence, include_emotion, on_batch=None):
     client = _openai_client(provider, api_key)
     system_text = _build_system(taxonomy, multi_theme, include_valence, include_emotion)
+    # OpenAI supports JSON mode — forces syntactically valid JSON, eliminating parse errors.
+    use_json_mode = provider == "OpenAI"
+    rf = {"type": "json_object"} if use_json_mode else None
     results = []
     total_batches = (len(responses) + batch_size - 1) // batch_size
     for batch_num, start in enumerate(range(0, len(responses), batch_size)):
         batch = responses[start:start + batch_size]
         numbered = "\n\n".join(f"{i+1}. {r}" for i, r in enumerate(batch))
-        raw = _strip_fences(_chat(client, model, system_text,
-                                   f"Code these {len(batch)} responses:\n\n{numbered}",
-                                   max_tokens=4096))
+        user_msg = f"Code these {len(batch)} responses:\n\n{numbered}"
+        if use_json_mode:
+            user_msg += '\n\nReturn a JSON object of the form {"results": [ one object per response, in order ]}.'
         before = len(results)
-        _parse_batch(raw, results)
+        # Retry the batch on parse failure (a weak model occasionally emits bad JSON);
+        # roll back any partial appends so retries don't duplicate. Never skips responses.
+        for _attempt in range(3):
+            try:
+                raw = _strip_fences(_chat(client, model, system_text, user_msg,
+                                          max_tokens=4096, response_format=rf))
+                _parse_batch(raw, results)
+                break
+            except (ValueError, SyntaxError, KeyError, TypeError):
+                del results[before:]
+                if _attempt == 2:
+                    raise
         if on_batch:
             on_batch(results[before:])
         if progress_callback:
@@ -451,6 +469,10 @@ def _normalize_theme(t: dict) -> dict:
 
 def _parse_batch(raw: str, results: list) -> None:
     batch_raw = _robust_json_loads(raw)
+    # JSON-mode responses wrap the array in an object, e.g. {"results": [...]}
+    if isinstance(batch_raw, dict):
+        _lists = [v for v in batch_raw.values() if isinstance(v, list)]
+        batch_raw = _lists[0] if _lists else [batch_raw]
     for item in batch_raw:
         results.append({
             "themes":     item.get("themes", [item]) if isinstance(item, dict) else [item],

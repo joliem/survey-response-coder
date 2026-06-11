@@ -193,11 +193,11 @@ def _friendly_api_error(e, provider: str = "") -> str:
             if model == "gemini-2.5-flash-lite":
                 msg += (
                     "Flash Lite has the smallest free allowance — switch to **Gemini 2.5 Flash**, or if "
-                    "that's also spent, a paid model (OpenAI **GPT-4o-mini** is fast and a few cents)."
+                    "that's also spent, a paid model (OpenAI **GPT-4.1 nano** is fast and a few cents)."
                 )
             else:
                 msg += (
-                    "For a full dataset, a paid model — OpenAI **GPT-4o-mini**, fast and a few cents — is "
+                    "For a full dataset, a paid model — OpenAI **GPT-4.1 nano**, fast and a few cents — is "
                     "much more reliable than waiting on free quota."
                 )
         else:
@@ -1149,7 +1149,7 @@ elif st.session_state.step == 4:
                 if st.session_state.provider == "Google Gemini":
                     _adv += "On Gemini's free tier it may also exceed today's daily request cap. "
                 _adv += (
-                    "For a smoother run: use a fast paid model (e.g. **GPT-4o-mini**), code a "
+                    "For a smoother run: use a fast paid model (e.g. **GPT-4.1 nano**), code a "
                     "**smaller subset**, or split the dataset into chunks."
                 )
             st.warning(_adv, icon="⏱️")
@@ -1279,6 +1279,12 @@ elif st.session_state.step == 4:
             elif len(results) < _n_total:
                 results += [{"themes": [NONE_THEME], "score": None, "label": None,
                              "emotion": None, "confidence": 0.0}] * (_n_total - len(results))
+            # Enforce single-theme when multi-theme wasn't requested (a model may
+            # return >1 theme despite the instruction — keep only the primary).
+            if not multi_theme:
+                for _r in results:
+                    if len(_r.get("themes") or []) > 1:
+                        _r["themes"] = _r["themes"][:1]
 
             progress_bar.progress(1.0, text="Done!")
             _track("coding_completed",
@@ -1310,7 +1316,8 @@ elif st.session_state.step == 4:
 
     if st.session_state.coded_df is not None:
         coded_df = st.session_state.coded_df
-        is_multi_theme = coded_df["theme"].str.contains(" | ", regex=False).any()
+        is_multi_theme = bool(st.session_state.get("multi_theme", False)) and \
+            coded_df["theme"].str.contains(" | ", regex=False).any()
         show_cols = (
             [text_col, "primary_theme"]
             + (["theme"] if is_multi_theme else [])
@@ -1545,21 +1552,28 @@ elif st.session_state.step == 5:
 
     st.title("📊 Visualize & Analyze")
 
-    # analysis_df: exploded — used for theme bar chart (includes NONE_THEME so it shows in distribution)
-    # covariate_df: one row per response, NONE_THEME excluded — used for all statistical analysis
-    is_multi = coded_df["theme"].str.contains(" | ", regex=False).any()
-    analysis_df = explode_themes(coded_df) if is_multi else coded_df.copy()
-    covariate_df = coded_df[coded_df["primary_theme"] != NONE_THEME].copy()
+    # Blank (no-text) responses — excluded from charts and analysis entirely.
+    _blank_mask = coded_df[text_col].isna() | (coded_df[text_col].astype(str).str.strip() == "")
+    _n_blank = int(_blank_mask.sum())
 
-    _none_count = (coded_df["primary_theme"] == NONE_THEME).sum()
+    # Treat as multi-theme only if the user CHOSE it and the data has multiple tags
+    # (guards against a model returning >1 theme on a single-theme run).
+    is_multi = bool(st.session_state.get("multi_theme", False)) and \
+        coded_df["theme"].str.contains(" | ", regex=False).any()
+    _chart_col = "theme" if is_multi else "primary_theme"
 
-    # Consistent theme order and color map — derived from analysis_df, excluding NONE_THEME
+    # themed_df: real themes only — blanks and "None of the above" removed.
+    themed_df = coded_df[(~_blank_mask) & (coded_df["primary_theme"] != NONE_THEME)].copy()
+    analysis_df = explode_themes(themed_df) if is_multi else themed_df.copy()
+    covariate_df = themed_df  # one row per response, blanks + None excluded — all stats use this
+
+    _none_count = int(((coded_df["primary_theme"] == NONE_THEME) & ~_blank_mask).sum())
+    _total = len(coded_df)
+
+    # Consistent theme order + color map (used by every chart on this page)
     import plotly.express as _px
     _palette = _px.colors.qualitative.Pastel
-    _by_count = (
-        analysis_df[analysis_df["theme"] != NONE_THEME]["theme"]
-        .value_counts().sort_values()
-    )
+    _by_count = analysis_df[_chart_col].value_counts().sort_values()
     _theme_color_map = {t: _palette[i % len(_palette)] for i, t in enumerate(_by_count.index)}
     _theme_order = list(_by_count.index[::-1])  # most common → rarest
 
@@ -1567,24 +1581,33 @@ elif st.session_state.step == 5:
     st.subheader("Theme Distribution")
     if is_multi:
         st.info(
-            f"Multi-theme coding: chart shows **theme tags** ({len(analysis_df):,}) "
-            f"across {len(coded_df):,} responses. Covariate analysis uses the **primary theme** "
+            f"Multi-theme coding: chart shows **theme tags** ({len(analysis_df):,}) across "
+            f"{len(themed_df):,} themed responses. Covariate analysis uses the **primary theme** "
             f"(most relevant) per response to preserve statistical independence.",
             icon="ℹ️",
         )
-    st.plotly_chart(theme_bar_chart(analysis_df, "theme"), use_container_width=True)
-    st.caption(
-        "Each bar shows the number of responses (or theme tags, if multi-theme coding was used) "
-        "assigned to that theme. Percentages are of the total."
+    st.plotly_chart(
+        theme_bar_chart(analysis_df, _chart_col, color_map=_theme_color_map, total=_total),
+        use_container_width=True,
     )
-    if _none_count > 0:
-        st.info(
-            f"**{_none_count} response{'s' if _none_count != 1 else ''} "
-            f"({_none_count / len(coded_df) * 100:.1f}%) were coded as '{NONE_THEME}'** — "
-            "too vague or off-topic to fit any theme. "
-            "These are shown in the distribution above but excluded from all analysis below.",
-            icon="ℹ️",
+    st.caption(
+        f"Each bar shows the count and its share of all {_total:,} responses. "
+        "Blank and unmatched ('None of the above') responses are excluded — see below."
+    )
+
+    # Notes for the excluded buckets
+    _excluded_notes = []
+    if _n_blank > 0:
+        _excluded_notes.append(
+            f"**{_n_blank:,} ({_n_blank / _total * 100:.1f}%)** had no response (blank) — excluded."
         )
+    if _none_count > 0:
+        _excluded_notes.append(
+            f"**{_none_count:,} ({_none_count / _total * 100:.1f}%)** had a response but didn't fit "
+            f"any theme (*{NONE_THEME}*) — excluded from charts and analysis."
+        )
+    if _excluded_notes:
+        st.info("  \n".join(_excluded_notes), icon="ℹ️")
 
     # ── Coding Confidence ───────────────────────────────────────
     if "confidence" in covariate_df.columns:
@@ -2190,7 +2213,8 @@ elif st.session_state.step == 5:
     # ── Download ────────────────────────────────────────────────
     st.divider()
     st.subheader("Download")
-    _is_multi = coded_df["theme"].str.contains(" | ", regex=False).any()
+    _is_multi = bool(st.session_state.get("multi_theme", False)) and \
+        coded_df["theme"].str.contains(" | ", regex=False).any()
     _drop_cols = ([] if _is_multi else ["theme"]) + [c for c in coded_df.columns if c.startswith("_")]
     _rename_cols = {"theme": "theme_list"} if _is_multi else {}
     _download_df = coded_df.drop(columns=_drop_cols).rename(columns=_rename_cols)
