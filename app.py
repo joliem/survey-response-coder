@@ -20,9 +20,27 @@ def _get_ip():
     """Best-effort client IP from Streamlit request headers."""
     try:
         headers = st.context.headers
-        return (headers.get("X-Forwarded-For") or headers.get("Remote-Addr") or "").split(",")[0].strip()
+        for key in ("X-Forwarded-For", "X-Real-Ip", "Forwarded", "Remote-Addr", "Client-Ip"):
+            val = headers.get(key) or headers.get(key.lower())
+            if val:
+                return val.split(",")[0].strip()
+        # Fallback: log all header keys on first session to diagnose
+        if "ip_headers_logged" not in st.session_state:
+            st.session_state.ip_headers_logged = True
+            _track_raw({"event": "_debug_headers", "headers": str(dict(headers))})
+        return ""
     except Exception:
         return ""
+
+def _track_raw(payload: dict):
+    """Send a raw payload — used internally for diagnostics."""
+    import threading, requests
+    def _send():
+        try:
+            requests.post(_TRACKING_URL, json=payload, timeout=5)
+        except Exception:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
 
 def _track(event: str, **kwargs):
     """Fire-and-forget event to Google Sheets. Never raises — tracking must not break the app."""
