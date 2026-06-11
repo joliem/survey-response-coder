@@ -213,6 +213,44 @@ def _coding_signature(n_responses, taxonomy, multi_theme, include_valence, inclu
     return hashlib.md5(key.encode()).hexdigest()
 
 
+def _responses_fingerprint(responses) -> str:
+    """Hash of the exact response texts — verifies a resume file matches the dataset."""
+    import hashlib
+    h = hashlib.md5()
+    h.update("\n".join(responses).encode("utf-8", "ignore"))
+    return h.hexdigest()
+
+
+def _build_resume_blob(*, text_col, covariate_cols, taxonomy, options, total, results, responses) -> bytes:
+    """Serialize everything needed to continue a coding run on a fresh session."""
+    import json
+    payload = {
+        "app": "survey-response-coder",
+        "kind": "coding-resume",
+        "version": 1,
+        "text_col": text_col,
+        "covariate_cols": list(covariate_cols),
+        "taxonomy": taxonomy,
+        "options": options,
+        "total": total,
+        "responses_hash": _responses_fingerprint(responses),
+        "results": results,
+    }
+    return json.dumps(payload).encode("utf-8")
+
+
+def _parse_resume_blob(data) -> dict:
+    """Parse + validate an uploaded resume file. Raises ValueError if malformed."""
+    import json
+    blob = json.loads(bytes(data).decode("utf-8"))
+    if not isinstance(blob, dict) or blob.get("kind") != "coding-resume":
+        raise ValueError("Not a Survey Response Coder resume file.")
+    for k in ("text_col", "taxonomy", "options", "total", "responses_hash", "results"):
+        if k not in blob:
+            raise ValueError("Resume file is missing required fields.")
+    return blob
+
+
 st.set_page_config(
     page_title="Survey Response Coder",
     page_icon="📊",
@@ -551,6 +589,61 @@ designed for quantitative UX and market researchers who need to make sense of fr
             st.session_state.covariate_cols = covariate_cols
             go_to(2)
             st.rerun()
+
+        with st.expander("↪️ Resume an interrupted coding run"):
+            st.caption(
+                "If a long coding run was interrupted (page/session reset), upload the **resume file** "
+                "you saved to pick up where it stopped. Load the **same dataset** above first."
+            )
+            _ru = st.file_uploader("Resume file (.json)", type=["json"], key="resume_uploader")
+            if _ru is not None:
+                try:
+                    _blob = _parse_resume_blob(_ru.getvalue())
+                except Exception:
+                    st.error("That doesn't look like a valid resume file.")
+                else:
+                    _tcol = _blob["text_col"]
+                    if _tcol not in df.columns:
+                        st.error(
+                            f"This resume file needs a `{_tcol}` column, which isn't in the loaded "
+                            "dataset — make sure you loaded the original file."
+                        )
+                    elif _responses_fingerprint(
+                        df[_tcol].fillna("").str.strip().tolist()
+                    ) != _blob["responses_hash"]:
+                        st.error(
+                            "This resume file doesn't match the loaded dataset. "
+                            "Load the exact same file you were coding before."
+                        )
+                    else:
+                        _done_n = len(_blob["results"])
+                        st.success(
+                            f"Resume file matches — **{_done_n:,} of {_blob['total']:,}** responses "
+                            "already coded."
+                        )
+                        if st.button("↪️ Continue this run", type="primary", key="resume_continue"):
+                            _opts = _blob["options"]
+                            st.session_state.text_col = _tcol
+                            st.session_state.covariate_cols = _blob.get("covariate_cols", [])
+                            st.session_state.taxonomy = _blob["taxonomy"]
+                            st.session_state.multi_theme = _opts.get("multi_theme", False)
+                            st.session_state.include_valence = _opts.get("include_valence", False)
+                            st.session_state.include_emotion = _opts.get("include_emotion", False)
+                            st.session_state.sentiment_enabled = (
+                                st.session_state.include_valence or st.session_state.include_emotion
+                            )
+                            _sig = _coding_signature(
+                                _blob["total"], _blob["taxonomy"],
+                                st.session_state.multi_theme,
+                                st.session_state.include_valence,
+                                st.session_state.include_emotion,
+                            )
+                            st.session_state.coding_progress = {
+                                "sig": _sig, "results": _blob["results"], "total": _blob["total"],
+                            }
+                            st.session_state.coded_df = None
+                            go_to(4)
+                            st.rerun()
 
 
 # ============================================================
@@ -1059,9 +1152,27 @@ elif st.session_state.step == 4:
                 "sidebar first (e.g. from a free tier that hit its daily cap).",
                 icon="↪️",
             )
-            if st.button("↻ Start over instead", key="step4_restart"):
-                st.session_state.coding_progress = None
-                st.rerun()
+            _rcol1, _rcol2 = st.columns(2)
+            with _rcol1:
+                if st.button("↻ Start over instead", key="step4_restart", use_container_width=True):
+                    st.session_state.coding_progress = None
+                    st.rerun()
+            with _rcol2:
+                st.download_button(
+                    "⬇ Save resume file",
+                    data=_build_resume_blob(
+                        text_col=text_col, covariate_cols=st.session_state.covariate_cols,
+                        taxonomy=taxonomy,
+                        options={"multi_theme": multi_theme, "include_valence": include_valence,
+                                 "include_emotion": include_emotion},
+                        total=_n_total, results=st.session_state.coding_progress["results"],
+                        responses=responses,
+                    ),
+                    file_name="coding_resume.json", mime="application/json",
+                    key="dl_resume_persist", use_container_width=True,
+                    help="Download progress so you can continue even if the page/session resets — "
+                         "re-upload it on the Load Data step.",
+                )
 
         if _start:
             if not st.session_state.demo_mode and not st.session_state.api_key:
@@ -1117,8 +1228,21 @@ elif st.session_state.step == 4:
                 st.error(
                     _friendly_api_error(_coding_err, st.session_state.provider)
                     + f"\n\n**{_saved:,} of {_n_total:,} responses are saved.** "
-                      "Click **Resume coding** to finish the rest — already-coded responses won't be redone.",
+                      "Click **Resume coding** to finish now (already-coded responses won't be redone), "
+                      "or **save the resume file** below to continue later — even if this page resets.",
                     icon="⚠️",
+                )
+                st.download_button(
+                    "⬇ Save resume file",
+                    data=_build_resume_blob(
+                        text_col=text_col, covariate_cols=st.session_state.covariate_cols,
+                        taxonomy=taxonomy,
+                        options={"multi_theme": multi_theme, "include_valence": include_valence,
+                                 "include_emotion": include_emotion},
+                        total=_n_total, results=st.session_state.coding_progress["results"],
+                        responses=responses,
+                    ),
+                    file_name="coding_resume.json", mime="application/json", key="dl_resume_fail",
                 )
                 _track("coding_failed",
                        provider=st.session_state.provider,
