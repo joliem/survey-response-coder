@@ -1015,6 +1015,25 @@ elif st.session_state.step == 4:
         _done = len(_prog["results"]) if _prog else 0
         _resume = bool(_prog) and 0 < _done < _n_total
 
+        # Pre-run advisory: long runs on free hosting risk a session reset that
+        # loses in-progress coding — independent of how much quota/credit you have.
+        if not st.session_state.demo_mode and _n_total > 300:
+            _batches = (_n_total + 9) // 10
+            _est_min = max(1, round(_batches * 4 / 60))  # ~4s/batch, rough
+            _adv = (
+                f"**Sizable run:** ~{_batches:,} requests, roughly **{_est_min}+ min** "
+                "(longer if a free tier rate-throttles it). Free-hosted apps can reset the session "
+                "during a long run, which loses in-progress coding — the **Resume** checkpoint "
+                "survives an in-app error, but **not** a full page/session reset. "
+            )
+            if st.session_state.provider == "Google Gemini":
+                _adv += "On Gemini's free tier it may also exceed today's daily request cap. "
+            _adv += (
+                "For a smooth run: use a fast paid model (e.g. **GPT-4o-mini**), code a **smaller "
+                "subset**, or split the dataset into chunks."
+            )
+            st.warning(_adv, icon="⏱️")
+
         _col1, _col2 = st.columns([1, 4])
         with _col1:
             if st.button("← Back", key="step4_back"):
