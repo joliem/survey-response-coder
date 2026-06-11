@@ -20,10 +20,14 @@ def _get_ip():
     """Best-effort client IP from Streamlit request headers."""
     try:
         headers = st.context.headers
-        for key in ("X-Forwarded-For", "X-Real-Ip", "Forwarded", "Remote-Addr", "Client-Ip"):
+        for key in ("Cf-Connecting-Ip", "X-Forwarded-For", "X-Real-Ip", "Forwarded", "Remote-Addr", "Client-Ip"):
             val = headers.get(key) or headers.get(key.lower())
             if val:
-                return val.split(",")[0].strip()
+                ip = val.split(",")[0].strip()
+                # Skip private/loopback addresses
+                if not (ip.startswith("192.168.") or ip.startswith("10.")
+                        or ip.startswith("172.") or ip in ("127.0.0.1", "::1")):
+                    return ip
     except Exception:
         pass
     return ""
