@@ -104,6 +104,17 @@ st.set_page_config(
     layout="wide",
 )
 
+# Inject Google Analytics via component (works on Streamlit Cloud)
+_components.html("""
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-JKFCS1EWQE"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-JKFCS1EWQE');
+</script>
+""", height=0)
+
 # --- Session state defaults ---
 DEFAULTS = {
     "step": 1,
