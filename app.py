@@ -63,6 +63,28 @@ def _track(event: str, **kwargs):
     # Mirror to GA4
     _track_ga(event, params=kwargs)
 
+def _feedback_form(key: str):
+    """Render a feedback form. `key` must be unique per call site."""
+    with st.form(f"feedback_form_{key}", clear_on_submit=True):
+        fb_text = st.text_area(
+            "Your feedback",
+            placeholder="What worked, what didn't, or what you'd love to see added…",
+            label_visibility="collapsed",
+            key=f"fb_text_{key}",
+        )
+        fb_contact = st.text_input(
+            "Email (optional)",
+            placeholder="Email (optional, if you'd like a reply)",
+            label_visibility="collapsed",
+            key=f"fb_contact_{key}",
+        )
+        if st.form_submit_button("Send", use_container_width=True):
+            if fb_text.strip():
+                _track("feedback", feedback_text=fb_text.strip(), contact=fb_contact.strip())
+                st.success("Thanks — your feedback was sent! 🙏")
+            else:
+                st.warning("Please enter a comment before sending.")
+
 _SCROLL_TOP = """<script>
 (function() {
     function go() {
@@ -321,6 +343,10 @@ with st.sidebar:
             for k, v in DEFAULTS.items():
                 st.session_state[k] = v
             st.rerun()
+
+    with st.expander("💬 Feedback / feature requests"):
+        _feedback_form("sidebar")
+
     st.caption("Powered by AI · Built with Streamlit")
 
 
@@ -1805,20 +1831,4 @@ elif st.session_state.step == 5:
         "Made it to the end? I'd love to hear what worked, what didn't, "
         "or any features you'd like to see."
     )
-    with st.form("feedback_form", clear_on_submit=True):
-        _fb_text = st.text_area(
-            "Your feedback",
-            placeholder="What worked, what didn't, or what you'd love to see added…",
-            label_visibility="collapsed",
-        )
-        _fb_contact = st.text_input(
-            "Email (optional)",
-            placeholder="Email (optional, if you'd like a reply)",
-            label_visibility="collapsed",
-        )
-        if st.form_submit_button("Send feedback", type="primary"):
-            if _fb_text.strip():
-                _track("feedback", feedback_text=_fb_text.strip(), contact=_fb_contact.strip())
-                st.success("Thanks — your feedback was sent! 🙏")
-            else:
-                st.warning("Please enter a comment before sending.")
+    _feedback_form("end")
