@@ -321,6 +321,26 @@ with st.sidebar:
             for k, v in DEFAULTS.items():
                 st.session_state[k] = v
             st.rerun()
+
+    with st.expander("💬 Feedback / feature requests"):
+        with st.form("feedback_form", clear_on_submit=True):
+            _fb_text = st.text_area(
+                "Tell me what you think",
+                placeholder="What worked, what didn't, or what you'd love to see added…",
+                label_visibility="collapsed",
+            )
+            _fb_contact = st.text_input(
+                "Email (optional)",
+                placeholder="Email (optional, if you'd like a reply)",
+                label_visibility="collapsed",
+            )
+            if st.form_submit_button("Send", use_container_width=True):
+                if _fb_text.strip():
+                    _track("feedback", feedback_text=_fb_text.strip(), contact=_fb_contact.strip())
+                    st.success("Thanks — your feedback was sent! 🙏")
+                else:
+                    st.warning("Please enter a comment before sending.")
+
     st.caption("Powered by AI · Built with Streamlit")
 
 
