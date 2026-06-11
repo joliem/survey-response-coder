@@ -1414,9 +1414,9 @@ elif st.session_state.step == 5:
                     with st.spinner("Selecting representative quotes…"):
                         _generate_quotes()
                     st.rerun()
-                except Exception as e:
+                except Exception as _quotes_err:
                     st.session_state.theme_quotes = {}
-                    st.error(f"Could not generate quotes: {e}")
+                    st.error(_friendly_api_error(_quotes_err, st.session_state.provider), icon="⚠️")
             st.caption(_q_cost_note)
 
     # ── Covariate Analysis ──────────────────────────────────────
