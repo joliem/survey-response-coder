@@ -24,31 +24,38 @@ def _get_ip():
             val = headers.get(key) or headers.get(key.lower())
             if val:
                 return val.split(",")[0].strip()
-        # Fallback: log all header keys on first session to diagnose
-        if "ip_headers_logged" not in st.session_state:
-            st.session_state.ip_headers_logged = True
-            _track_raw({"event": "_debug_headers", "headers": str(dict(headers))})
-        return ""
     except Exception:
-        return ""
+        pass
+    return ""
 
-def _track_raw(payload: dict):
-    """Send a raw payload — used internally for diagnostics."""
-    import threading, requests
-    def _send():
-        try:
-            requests.post(_TRACKING_URL, json=payload, timeout=5)
-        except Exception:
-            pass
-    threading.Thread(target=_send, daemon=True).start()
+def _get_location(ip: str) -> dict:
+    """Look up city/region/country for an IP. Returns empty dict on failure."""
+    if not ip or ip.startswith("127.") or ip.startswith("::1"):
+        return {}
+    try:
+        import requests as _req
+        r = _req.get(f"http://ip-api.com/json/{ip}?fields=country,regionName,city",
+                     timeout=3)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("status") != "fail":
+                return data
+    except Exception:
+        pass
+    return {}
 
 def _track(event: str, **kwargs):
     """Fire-and-forget event to Google Sheets. Never raises — tracking must not break the app."""
     import threading, requests
+    ip = _get_ip()
+    loc = _get_location(ip)
     payload = {
         "event": event,
         "session_id": _get_session_id(),
-        "ip": _get_ip(),
+        "ip": ip,
+        "city": loc.get("city", ""),
+        "region": loc.get("regionName", ""),
+        "country": loc.get("country", ""),
         **kwargs,
     }
     def _send():
