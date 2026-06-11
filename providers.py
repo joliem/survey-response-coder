@@ -250,7 +250,7 @@ def _suggest_anthropic(model, api_key, responses, user_seeds, max_responses, min
 
 
 def _code_anthropic(model, api_key, responses, taxonomy, batch_size,
-                    progress_callback, multi_theme, include_valence, include_emotion):
+                    progress_callback, multi_theme, include_valence, include_emotion, on_batch=None):
     client = _anthropic_client(api_key)
     system_text = _build_system(taxonomy, multi_theme, include_valence, include_emotion)
     results = []
@@ -263,7 +263,10 @@ def _code_anthropic(model, api_key, responses, taxonomy, batch_size,
             system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": f"Code these {len(batch)} responses:\n\n{numbered}"}],
         )
+        before = len(results)
         _parse_batch(msg.content[0].text, results)
+        if on_batch:
+            on_batch(results[before:])
         if progress_callback:
             progress_callback((batch_num + 1) / total_batches)
     return results
@@ -355,7 +358,7 @@ def _suggest_openai_compat(provider, model, api_key, responses, user_seeds,
 
 
 def _code_openai_compat(provider, model, api_key, responses, taxonomy, batch_size,
-                        progress_callback, multi_theme, include_valence, include_emotion):
+                        progress_callback, multi_theme, include_valence, include_emotion, on_batch=None):
     client = _openai_client(provider, api_key)
     system_text = _build_system(taxonomy, multi_theme, include_valence, include_emotion)
     results = []
@@ -366,7 +369,10 @@ def _code_openai_compat(provider, model, api_key, responses, taxonomy, batch_siz
         raw = _strip_fences(_chat(client, model, system_text,
                                    f"Code these {len(batch)} responses:\n\n{numbered}",
                                    max_tokens=4096))
+        before = len(results)
         _parse_batch(raw, results)
+        if on_batch:
+            on_batch(results[before:])
         if progress_callback:
             progress_callback((batch_num + 1) / total_batches)
     return results
@@ -460,12 +466,14 @@ def suggest_themes(provider, model, api_key, responses, user_seeds="",
 
 def code_responses(provider, model, api_key, responses, taxonomy, batch_size=10,
                    progress_callback=None, multi_theme=False,
-                   include_valence=False, include_emotion=False):
+                   include_valence=False, include_emotion=False, on_batch=None):
     if provider == "Anthropic":
         return _code_anthropic(model, api_key, responses, taxonomy, batch_size,
-                                progress_callback, multi_theme, include_valence, include_emotion)
+                                progress_callback, multi_theme, include_valence, include_emotion,
+                                on_batch=on_batch)
     return _code_openai_compat(provider, model, api_key, responses, taxonomy, batch_size,
-                                progress_callback, multi_theme, include_valence, include_emotion)
+                                progress_callback, multi_theme, include_valence, include_emotion,
+                                on_batch=on_batch)
 
 
 def split_theme(provider, model, api_key, theme, new_name_1, new_name_2, sample_responses):

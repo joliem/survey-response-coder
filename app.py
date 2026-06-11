@@ -185,6 +185,18 @@ def _friendly_api_error(e, provider: str = "") -> str:
     return f"**Coding failed** ({name}). Try again, or switch model/provider in the sidebar."
 
 
+def _coding_signature(n_responses, taxonomy, multi_theme, include_valence, include_emotion) -> str:
+    """Identify a coding run so partial progress can only resume a compatible one.
+
+    Deliberately excludes provider/model — so you can hit a free-tier wall on one
+    model and resume the rest on another.
+    """
+    import hashlib
+    theme_part = tuple((t.get("name", ""), t.get("description", "")) for t in taxonomy)
+    key = repr((theme_part, n_responses, multi_theme, include_valence, include_emotion))
+    return hashlib.md5(key.encode()).hexdigest()
+
+
 st.set_page_config(
     page_title="Survey Response Coder",
     page_icon="📊",
@@ -225,6 +237,7 @@ DEFAULTS = {
     "irr_pos": 0,
     "rerun_requested": False,
     "theme_quotes": {},       # cached representative quotes per theme (lazy-computed)
+    "coding_progress": None,  # {"sig", "results", "total"} for checkpoint/resume of coding
     "_rendered_step": -1,
 }
 for k, v in DEFAULTS.items():
@@ -965,58 +978,107 @@ elif st.session_state.step == 4:
             include_emotion = False
 
     if st.session_state.coded_df is None:
-        label = "Start Coding (Demo) →" if st.session_state.demo_mode else "Start Coding →"
+        responses = df[text_col].fillna("").str.strip().tolist()
+        _n_total = len(responses)
+        _sig = _coding_signature(_n_total, taxonomy, multi_theme, include_valence, include_emotion)
+
+        # Drop stale checkpoint if taxonomy/options changed since it was saved
+        _prog = st.session_state.coding_progress
+        if _prog and _prog.get("sig") != _sig:
+            _prog = None
+            st.session_state.coding_progress = None
+        _done = len(_prog["results"]) if _prog else 0
+        _resume = bool(_prog) and 0 < _done < _n_total
+
         _col1, _col2 = st.columns([1, 4])
         with _col1:
             if st.button("← Back", key="step4_back"):
                 go_to(3)
                 st.rerun()
         with _col2:
-            _start = st.button(label, type="primary", use_container_width=True)
+            if _resume:
+                _label = f"▶ Resume coding ({_n_total - _done:,} of {_n_total:,} left)"
+            else:
+                _label = "Start Coding (Demo) →" if st.session_state.demo_mode else "Start Coding →"
+            _start = st.button(_label, type="primary", use_container_width=True)
+
+        if _resume:
+            st.info(
+                f"A previous run coded **{_done:,} of {_n_total:,}** responses before it stopped. "
+                "Resume to finish the rest — you can switch to a different model or provider in the "
+                "sidebar first (e.g. from a free tier that hit its daily cap).",
+                icon="↪️",
+            )
+            if st.button("↻ Start over instead", key="step4_restart"):
+                st.session_state.coding_progress = None
+                st.rerun()
+
         if _start:
             if not st.session_state.demo_mode and not st.session_state.api_key:
                 st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
                 st.stop()
-            responses = df[text_col].fillna("").str.strip().tolist()
-            progress_bar = st.progress(0, text="Starting...")
 
-            def update_progress(pct: float):
-                progress_bar.progress(pct, text=f"Coding responses... {int(pct * 100)}%")
+            # Reuse the checkpoint when resuming; otherwise start a fresh one
+            if not _resume:
+                st.session_state.coding_progress = {"sig": _sig, "results": [], "total": _n_total}
+            _start_index = len(st.session_state.coding_progress["results"])
+            _remaining = responses[_start_index:]
+            progress_bar = st.progress(_start_index / _n_total, text="Starting...")
+
+            def _on_batch(batch_results):
+                st.session_state.coding_progress["results"].extend(batch_results)
+                _d = len(st.session_state.coding_progress["results"])
+                progress_bar.progress(min(_d / _n_total, 1.0),
+                                      text=f"Coding responses... {_d:,}/{_n_total:,}")
 
             try:
                 if st.session_state.demo_mode:
-                    results = code_responses_demo(
-                        responses, taxonomy, df=df, progress_callback=update_progress,
+                    _demo_results = code_responses_demo(
+                        _remaining, taxonomy,
+                        df=df.iloc[_start_index:].reset_index(drop=True),
                         multi_theme=multi_theme,
                         include_valence=include_valence, include_emotion=include_emotion,
                     )
+                    _on_batch(_demo_results)
                 else:
-                    results = code_responses(
+                    code_responses(
                         st.session_state.provider,
                         st.session_state.model,
                         st.session_state.api_key or None,
-                        responses, taxonomy, progress_callback=update_progress,
+                        _remaining, taxonomy,
                         multi_theme=multi_theme,
                         include_valence=include_valence, include_emotion=include_emotion,
+                        on_batch=_on_batch,
                     )
             except Exception as _coding_err:
                 progress_bar.empty()
+                _saved = len(st.session_state.coding_progress["results"])
                 st.error(
                     _friendly_api_error(_coding_err, st.session_state.provider)
-                    + "\n\n_Partial progress isn't saved yet, so coding restarts from the beginning._",
+                    + f"\n\n**{_saved:,} of {_n_total:,} responses are saved.** "
+                      "Click **Resume coding** to finish the rest — already-coded responses won't be redone.",
                     icon="⚠️",
                 )
                 _track("coding_failed",
                        provider=st.session_state.provider,
                        model=st.session_state.model,
-                       error=type(_coding_err).__name__)
+                       error=type(_coding_err).__name__,
+                       coded_so_far=_saved)
                 st.stop()
+
+            results = st.session_state.coding_progress["results"]
+            # Safety: keep results aligned to the dataframe length
+            if len(results) > _n_total:
+                results = results[:_n_total]
+            elif len(results) < _n_total:
+                results += [{"themes": [NONE_THEME], "score": None, "label": None,
+                             "emotion": None, "confidence": 0.0}] * (_n_total - len(results))
 
             progress_bar.progress(1.0, text="Done!")
             _track("coding_completed",
                    provider=st.session_state.provider,
                    model=st.session_state.model,
-                   num_responses=len(responses),
+                   num_responses=_n_total,
                    demo_mode=st.session_state.demo_mode)
             coded_df = df.copy()
             coded_df["theme"] = [" | ".join(r["themes"]) for r in results]
@@ -1028,12 +1090,14 @@ elif st.session_state.step == 4:
             if include_emotion:
                 coded_df["emotion"] = [r["emotion"] for r in results]
             st.session_state.coded_df = coded_df
+            st.session_state.coding_progress = None  # checkpoint consumed
             st.session_state.theme_quotes = {}  # invalidate cached quotes
             st.rerun()
     else:
         st.success(f"Coding complete — {len(st.session_state.coded_df):,} responses coded.")
         if st.button("↺ Re-run Coding with New Options", key="step4_rerun"):
             st.session_state.coded_df = None
+            st.session_state.coding_progress = None
             st.session_state.theme_quotes = {}
             _track("coding_rerun")
             st.rerun()
