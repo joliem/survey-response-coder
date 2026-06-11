@@ -172,9 +172,9 @@ def _friendly_api_error(e, provider: str = "") -> str:
             msg += (
                 "This can mean a per-minute rate limit, an exhausted daily quota, or no remaining "
                 "credits. Check your account's limits and billing, wait a moment, or switch to a "
-                "different model or provider in the sidebar, then run coding again."
+                "different model or provider in the sidebar, then try again."
             )
-        return msg + "\n\n_Note: partial progress isn't saved, so coding restarts from the beginning._"
+        return msg
     if name == "AuthenticationError" or status == 401:
         return f"**Authentication failed** — check that your API key is valid for {prov}."
     if name == "NotFoundError" or status == 404:
@@ -629,17 +629,25 @@ elif st.session_state.step == 2:
                 st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
             else:
                 responses = df[text_col].dropna().str.strip().tolist()
-                if st.session_state.demo_mode:
-                    taxonomy = suggest_themes_demo(responses, user_seeds, max_themes=max_themes)
-                else:
-                    with st.spinner("Reading your responses and building a taxonomy..."):
-                        taxonomy = suggest_themes(
-                            st.session_state.provider, st.session_state.model,
-                            st.session_state.api_key or None,
-                            responses, user_seeds,
-                            max_responses=max_for_taxonomy,
-                            min_themes=min_themes, max_themes=max_themes,
-                        )
+                try:
+                    if st.session_state.demo_mode:
+                        taxonomy = suggest_themes_demo(responses, user_seeds, max_themes=max_themes)
+                    else:
+                        with st.spinner("Reading your responses and building a taxonomy..."):
+                            taxonomy = suggest_themes(
+                                st.session_state.provider, st.session_state.model,
+                                st.session_state.api_key or None,
+                                responses, user_seeds,
+                                max_responses=max_for_taxonomy,
+                                min_themes=min_themes, max_themes=max_themes,
+                            )
+                except Exception as _tax_err:
+                    st.error(_friendly_api_error(_tax_err, st.session_state.provider), icon="⚠️")
+                    _track("taxonomy_failed",
+                           provider=st.session_state.provider,
+                           model=st.session_state.model,
+                           error=type(_tax_err).__name__)
+                    st.stop()
                 st.session_state.taxonomy = taxonomy
                 st.session_state.preview_sample = None
                 _track("taxonomy_generated",
@@ -790,16 +798,20 @@ elif st.session_state.step == 3:
                             .sample(min(30, len(df)), random_state=42)
                             .tolist()
                         )
-                        with st.spinner(f"Splitting '{to_split}' with AI..."):
-                            new_themes = split_theme(
-                                st.session_state.provider,
-                                st.session_state.model,
-                                st.session_state.api_key or None,
-                                old_theme or {"name": to_split, "description": ""},
-                                new_name_1.strip(),
-                                new_name_2.strip(),
-                                sample_for_split,
-                            )
+                        try:
+                            with st.spinner(f"Splitting '{to_split}' with AI..."):
+                                new_themes = split_theme(
+                                    st.session_state.provider,
+                                    st.session_state.model,
+                                    st.session_state.api_key or None,
+                                    old_theme or {"name": to_split, "description": ""},
+                                    new_name_1.strip(),
+                                    new_name_2.strip(),
+                                    sample_for_split,
+                                )
+                        except Exception as _split_err:
+                            st.error(_friendly_api_error(_split_err, st.session_state.provider), icon="⚠️")
+                            st.stop()
                         new_taxonomy.extend(new_themes)
 
                     st.session_state.taxonomy = new_taxonomy
@@ -832,21 +844,25 @@ elif st.session_state.step == 3:
             )
             sample_texts = sample_df[text_col].str.strip().tolist()
 
-            with st.spinner("Coding sample..."):
-                if st.session_state.demo_mode:
-                    results = code_responses_demo(
-                        sample_texts, current_taxonomy,
-                        df=sample_df, progress_callback=None,
-                        multi_theme=False,
-                    )
-                else:
-                    results = code_responses(
-                        st.session_state.provider,
-                        st.session_state.model,
-                        st.session_state.api_key or None,
-                        sample_texts, current_taxonomy,
-                        multi_theme=False,
-                    )
+            try:
+                with st.spinner("Coding sample..."):
+                    if st.session_state.demo_mode:
+                        results = code_responses_demo(
+                            sample_texts, current_taxonomy,
+                            df=sample_df, progress_callback=None,
+                            multi_theme=False,
+                        )
+                    else:
+                        results = code_responses(
+                            st.session_state.provider,
+                            st.session_state.model,
+                            st.session_state.api_key or None,
+                            sample_texts, current_taxonomy,
+                            multi_theme=False,
+                        )
+            except Exception as _preview_err:
+                st.error(_friendly_api_error(_preview_err, st.session_state.provider), icon="⚠️")
+                st.stop()
 
             st.session_state.preview_sample = [
                 {"text": text, "primary_theme": r["themes"][0]}
@@ -985,7 +1001,11 @@ elif st.session_state.step == 4:
                     )
             except Exception as _coding_err:
                 progress_bar.empty()
-                st.error(_friendly_api_error(_coding_err, st.session_state.provider), icon="⚠️")
+                st.error(
+                    _friendly_api_error(_coding_err, st.session_state.provider)
+                    + "\n\n_Partial progress isn't saved yet, so coding restarts from the beginning._",
+                    icon="⚠️",
+                )
                 _track("coding_failed",
                        provider=st.session_state.provider,
                        model=st.session_state.model,
