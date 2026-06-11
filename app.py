@@ -6,6 +6,28 @@ import streamlit as st
 import streamlit.components.v1 as _components
 import pandas as pd
 
+_GA_ID = "G-JKFCS1EWQE"
+_TRACKING_URL = "https://script.google.com/macros/s/AKfycbx0UXfGtAjn30NYk8gY80gsV5vZewuERtBdk3mvHPGeSnHBMXTl54Q8mJtDNWYun28S/exec"
+
+def _track(event: str, **kwargs):
+    """Fire-and-forget event to Google Sheets. Never raises — tracking must not break the app."""
+    import threading, requests
+    payload = {"event": event, **kwargs}
+    def _send():
+        try:
+            requests.post(_TRACKING_URL, json=payload, timeout=5)
+        except Exception:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
+_GA = f"""<!-- Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id={_GA_ID}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){{dataLayer.push(arguments);}}
+  gtag('js', new Date());
+  gtag('config', '{_GA_ID}');
+</script>"""
+
 _SCROLL_TOP = """<script>
 (function() {
     function go() {
@@ -67,6 +89,9 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
+
+# Inject Google Analytics
+st.html(_GA)
 
 # --- Session state defaults ---
 DEFAULTS = {
@@ -139,6 +164,8 @@ with st.sidebar:
     )
     if demo_toggle != st.session_state.demo_mode:
         st.session_state.demo_mode = demo_toggle
+        if demo_toggle:
+            _track("demo_mode_enabled")
         st.session_state.provider = "Demo Mode" if demo_toggle else "Anthropic"
         if not demo_toggle:
             st.session_state.model = DEFAULT_MODEL["Anthropic"]
@@ -495,6 +522,11 @@ elif st.session_state.step == 2:
                         )
                 st.session_state.taxonomy = taxonomy
                 st.session_state.preview_sample = None
+                _track("taxonomy_generated",
+                       provider=st.session_state.provider,
+                       model=st.session_state.model,
+                       num_responses=len(responses),
+                       demo_mode=st.session_state.demo_mode)
                 go_to(3)
                 st.rerun()
 
@@ -829,6 +861,11 @@ elif st.session_state.step == 4:
                 )
 
             progress_bar.progress(1.0, text="Done!")
+            _track("coding_completed",
+                   provider=st.session_state.provider,
+                   model=st.session_state.model,
+                   num_responses=len(responses),
+                   demo_mode=st.session_state.demo_mode)
             coded_df = df.copy()
             coded_df["theme"] = [" | ".join(r["themes"]) for r in results]
             coded_df["primary_theme"] = [r["themes"][0] for r in results]
@@ -1664,13 +1701,14 @@ elif st.session_state.step == 5:
 
     _dl_col1, _dl_col2 = st.columns(2)
     with _dl_col1:
-        st.download_button(
+        if st.download_button(
             "⬇ Coded Dataset (CSV)",
             data=_download_df.to_csv(index=False).encode(),
             file_name="coded_responses.csv",
             mime="text/csv",
             use_container_width=True,
-        )
+        ):
+            _track("download_csv", demo_mode=st.session_state.demo_mode)
         st.caption(
             "Includes the original data plus: "
             "`primary_theme`, `confidence`, "
@@ -1689,13 +1727,14 @@ elif st.session_state.step == 5:
             include_emotion=_nb_include_emotion,
             theme_order=_theme_order,
         )
-        st.download_button(
+        if st.download_button(
             "⬇ Analysis Notebook (Jupyter)",
             data=_nb_bytes,
             file_name="survey_analysis.ipynb",
             mime="application/x-ipynb+json",
             use_container_width=True,
-        )
+        ):
+            _track("download_notebook", demo_mode=st.session_state.demo_mode)
         st.caption(
             "Self-contained Jupyter notebook with all charts and statistical tests. "
             "The coded dataset is embedded — no external files needed. "
