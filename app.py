@@ -17,67 +17,23 @@ def _get_session_id():
     return st.session_state.session_id
 
 def _get_ip():
-    """Best-effort client IP from Streamlit request headers."""
+    """Best-effort client IP — note: Streamlit Community Cloud only exposes internal IPs."""
     try:
         headers = st.context.headers
-        # Log all headers once per session for debugging
-        if "headers_logged" not in st.session_state:
-            st.session_state.headers_logged = True
-            _track_raw({"event": "_debug_headers", "session_id": _get_session_id(),
-                        "debug": str({k: v for k, v in headers.items()})})
-        for key in ("Cf-Connecting-Ip", "X-Forwarded-For", "X-Real-Ip", "Forwarded", "Remote-Addr", "Client-Ip"):
+        for key in ("Cf-Connecting-Ip", "X-Forwarded-For", "X-Real-Ip", "Remote-Addr"):
             val = headers.get(key) or headers.get(key.lower())
             if val:
-                ip = val.split(",")[0].strip()
-                if not (ip.startswith("192.168.") or ip.startswith("10.")
-                        or ip.startswith("172.") or ip in ("127.0.0.1", "::1")):
-                    return ip
+                return val.split(",")[0].strip()
     except Exception:
         pass
     return ""
 
-def _track_raw(payload: dict):
-    import threading, requests as _req
-    def _send():
-        try:
-            _req.post(_TRACKING_URL, json=payload, timeout=5)
-        except Exception:
-            pass
-    threading.Thread(target=_send, daemon=True).start()
-
-def _get_location(ip: str) -> dict:
-    """Look up city/region/country for an IP using ipinfo.io."""
-    if not ip or ip.startswith("127.") or ip.startswith("::1"):
-        return {"_debug": f"skipped:{ip}"}
-    try:
-        import requests as _req
-        r = _req.get(f"https://ipinfo.io/{ip}/json", timeout=3)
-        raw = r.text[:300]
-        if r.status_code == 200:
-            data = r.json()
-            return {
-                "city": data.get("city", ""),
-                "regionName": data.get("region", ""),
-                "country": data.get("country", ""),
-                "_debug": f"ok:{raw}",
-            }
-        return {"_debug": f"status:{r.status_code}:{raw}"}
-    except Exception as ex:
-        return {"_debug": f"error:{ex}"}
-
 def _track(event: str, **kwargs):
     """Fire-and-forget event to Google Sheets. Never raises — tracking must not break the app."""
     import threading, requests
-    ip = _get_ip()
-    loc = _get_location(ip)
     payload = {
         "event": event,
         "session_id": _get_session_id(),
-        "ip": ip,
-        "city": loc.get("city", ""),
-        "region": loc.get("regionName", ""),
-        "country": loc.get("country", ""),
-        "debug": loc.get("_debug", ""),
         **kwargs,
     }
     def _send():
