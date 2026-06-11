@@ -100,6 +100,8 @@ def generate_notebook(
     cells.append(_md(
         f"# Survey Response Coder — Analysis Report\n\n"
         f"**{n_resp:,} responses** · **{n_themes} themes**\n\n"
+        f"Generated with the [Survey Response Coder](https://survey-response-coder.streamlit.app) "
+        f"by [Jolie Martin](https://github.com/joliem/survey-response-coder).\n\n"
         f"This notebook is self-contained — the coded dataset is embedded in the cell below.\n"
         f"Run cells top-to-bottom; customize any cell as needed.\n\n"
         f"---\n\n"
@@ -555,6 +557,18 @@ def generate_notebook(
         "**ε²:** same benchmarks\n\n"
         "### Multiple comparisons\n"
         "Effect size (Cramér's V, η², ε²) is generally more informative than p-values alone."
+    ))
+
+    # ── License / credit footer ────────────────────────────────
+    cells.append(_md(
+        "---\n\n"
+        "### About\n\n"
+        "This report was generated with the "
+        "[Survey Response Coder](https://survey-response-coder.streamlit.app), "
+        "an AI-assisted qualitative coding tool created by "
+        "[Jolie Martin](https://github.com/joliem/survey-response-coder).\n\n"
+        "Released under the **MIT License** — free to use, modify, and distribute "
+        "with attribution. © 2026 Jolie Martin."
     ))
 
     nb = {
