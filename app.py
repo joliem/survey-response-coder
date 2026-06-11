@@ -7,6 +7,8 @@ import streamlit.components.v1 as _components
 import pandas as pd
 
 _TRACKING_URL = "https://script.google.com/macros/s/AKfycbx0UXfGtAjn30NYk8gY80gsV5vZewuERtBdk3mvHPGeSnHBMXTl54Q8mJtDNWYun28S/exec"
+_GA_MEASUREMENT_ID = "G-JKFCS1EWQE"
+_GA_MP_URL = "https://www.google-analytics.com/mp/collect"
 
 def _get_session_id():
     """Return a stable UUID for this browser session."""
@@ -15,20 +17,37 @@ def _get_session_id():
         st.session_state.session_id = str(uuid.uuid4())
     return st.session_state.session_id
 
-def _get_ip():
-    """Best-effort client IP — note: Streamlit Community Cloud only exposes internal IPs."""
+def _get_ga_secret():
+    """Read GA4 Measurement Protocol API secret from Streamlit secrets."""
     try:
-        headers = st.context.headers
-        for key in ("Cf-Connecting-Ip", "X-Forwarded-For", "X-Real-Ip", "Remote-Addr"):
-            val = headers.get(key) or headers.get(key.lower())
-            if val:
-                return val.split(",")[0].strip()
+        return st.secrets["GA_API_SECRET"]
     except Exception:
-        pass
-    return ""
+        return None
+
+def _track_ga(event_name: str, params: dict = None):
+    """Send a GA4 event via Measurement Protocol (server-side, no iframe issues)."""
+    import threading, requests
+    secret = _get_ga_secret()
+    if not secret:
+        return
+    payload = {
+        "client_id": _get_session_id(),
+        "events": [{"name": event_name, "params": params or {}}],
+    }
+    def _send():
+        try:
+            requests.post(
+                _GA_MP_URL,
+                params={"measurement_id": _GA_MEASUREMENT_ID, "api_secret": secret},
+                json=payload,
+                timeout=5,
+            )
+        except Exception:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
 
 def _track(event: str, **kwargs):
-    """Fire-and-forget event to Google Sheets. Never raises — tracking must not break the app."""
+    """Fire-and-forget event to Google Sheets + GA4. Never raises."""
     import threading, requests
     payload = {
         "event": event,
@@ -41,6 +60,8 @@ def _track(event: str, **kwargs):
         except Exception:
             pass
     threading.Thread(target=_send, daemon=True).start()
+    # Mirror to GA4
+    _track_ga(event, params=kwargs)
 
 _SCROLL_TOP = """<script>
 (function() {
@@ -142,6 +163,11 @@ DEFAULTS = {
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+# Fire a page_view once per session
+if "ga_page_view_sent" not in st.session_state:
+    st.session_state.ga_page_view_sent = True
+    _track_ga("page_view", {"page_title": "Survey Response Coder", "page_location": "https://survey-response-coder.streamlit.app/"})
 
 
 def go_to(step: int):
