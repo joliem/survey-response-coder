@@ -765,7 +765,6 @@ elif st.session_state.step == 2:
             _cost_note = (
                 f"Each taxonomy run samples {max_for_taxonomy:,} responses: ~\${_est:.3f} per run. "
                 f"Each coding run covers all {total_responses:,} responses: ~\${_coding_est_lo:.2f}–\${_coding_est_hi:.2f} per run. "
-                f"Costs are per run — refining the taxonomy 3× then coding once = 3 taxonomy runs + 1 coding run. "
                 f"Prices may vary.{_pricing_link}"
             )
         st.caption(_cost_note)
@@ -1200,16 +1199,9 @@ elif st.session_state.step == 4:
                 st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
                 st.stop()
 
-            # Preflight: verify the key/model can make calls before a long run, so we
-            # never start coding only to fail partway (out of credits / already capped).
-            if not st.session_state.demo_mode:
-                try:
-                    with st.spinner("Checking your key & quota…"):
-                        preflight_check(st.session_state.provider, st.session_state.model,
-                                        st.session_state.api_key or None)
-                except Exception as _pf_err:
-                    st.error(_friendly_api_error(_pf_err, st.session_state.provider), icon="⚠️")
-                    st.stop()
+            # (No pre-run preflight: a 1-token test can't predict a multi-request run and
+            #  would waste one of a free tier's scarce requests. If the run can't start,
+            #  the first batch fails immediately with the same clean error + checkpoint.)
 
             # Reuse the checkpoint when resuming; otherwise start a fresh one
             if not _resume:
