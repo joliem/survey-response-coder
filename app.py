@@ -29,17 +29,20 @@ def _get_ip():
     return ""
 
 def _get_location(ip: str) -> dict:
-    """Look up city/region/country for an IP. Returns empty dict on failure."""
+    """Look up city/region/country for an IP using ipinfo.io."""
     if not ip or ip.startswith("127.") or ip.startswith("::1"):
         return {}
     try:
         import requests as _req
-        r = _req.get(f"http://ip-api.com/json/{ip}?fields=country,regionName,city",
-                     timeout=3)
+        r = _req.get(f"https://ipinfo.io/{ip}/json", timeout=3)
         if r.status_code == 200:
             data = r.json()
-            if data.get("status") != "fail":
-                return data
+            # ipinfo returns {"city": "...", "region": "...", "country": "US", ...}
+            return {
+                "city": data.get("city", ""),
+                "regionName": data.get("region", ""),
+                "country": data.get("country", ""),
+            }
     except Exception:
         pass
     return {}
