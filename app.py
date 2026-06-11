@@ -435,13 +435,18 @@ with st.sidebar:
         if _key_ok:
             _display_model = _effective_model if _effective_model != "__custom__" else "your custom model"
             st.success(f"API key set — ready to use {_display_model}.", icon="⚡")
-            if st.button("✓ Test key & quota", use_container_width=True,
+            if st.button("✓ Test key", use_container_width=True,
                          help="Sends one tiny request to confirm the key works and isn't out of "
-                              "credits or already rate-limited — before you start a long run."):
+                              "credits or already capped right now."):
                 try:
                     with st.spinner("Testing…"):
                         preflight_check(selected_provider, _effective_model, _entered)
-                    st.success("Key works and has quota available. ✓", icon="✅")
+                    st.success("Key works — a test request just went through. ✓", icon="✅")
+                    if selected_provider == "Google Gemini":
+                        st.caption(
+                            "This only confirms one call succeeds now. On the free tier it can't tell "
+                            "whether your remaining **daily** quota covers a full coding run."
+                        )
                 except Exception as _pf_err:
                     st.error(_friendly_api_error(_pf_err, selected_provider), icon="⚠️")
         else:
