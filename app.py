@@ -6,7 +6,6 @@ import streamlit as st
 import streamlit.components.v1 as _components
 import pandas as pd
 
-_GA_ID = "G-JKFCS1EWQE"
 _TRACKING_URL = "https://script.google.com/macros/s/AKfycbx0UXfGtAjn30NYk8gY80gsV5vZewuERtBdk3mvHPGeSnHBMXTl54Q8mJtDNWYun28S/exec"
 
 def _get_session_id():
@@ -42,14 +41,6 @@ def _track(event: str, **kwargs):
         except Exception:
             pass
     threading.Thread(target=_send, daemon=True).start()
-_GA = f"""<!-- Google Analytics -->
-<script async src="https://www.googletagmanager.com/gtag/js?id={_GA_ID}"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){{dataLayer.push(arguments);}}
-  gtag('js', new Date());
-  gtag('config', '{_GA_ID}');
-</script>"""
 
 _SCROLL_TOP = """<script>
 (function() {
@@ -112,9 +103,6 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
-
-# Inject Google Analytics
-st.html(_GA)
 
 # --- Session state defaults ---
 DEFAULTS = {
