@@ -9,10 +9,30 @@ import pandas as pd
 _GA_ID = "G-JKFCS1EWQE"
 _TRACKING_URL = "https://script.google.com/macros/s/AKfycbx0UXfGtAjn30NYk8gY80gsV5vZewuERtBdk3mvHPGeSnHBMXTl54Q8mJtDNWYun28S/exec"
 
+def _get_session_id():
+    """Return a stable UUID for this browser session."""
+    import uuid
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
+    return st.session_state.session_id
+
+def _get_ip():
+    """Best-effort client IP from Streamlit request headers."""
+    try:
+        headers = st.context.headers
+        return (headers.get("X-Forwarded-For") or headers.get("Remote-Addr") or "").split(",")[0].strip()
+    except Exception:
+        return ""
+
 def _track(event: str, **kwargs):
     """Fire-and-forget event to Google Sheets. Never raises — tracking must not break the app."""
     import threading, requests
-    payload = {"event": event, **kwargs}
+    payload = {
+        "event": event,
+        "session_id": _get_session_id(),
+        "ip": _get_ip(),
+        **kwargs,
+    }
     def _send():
         try:
             requests.post(_TRACKING_URL, json=payload, timeout=5)
