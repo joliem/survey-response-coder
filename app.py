@@ -155,21 +155,28 @@ def _quote(text: str) -> None:
     )
 
 
-def _friendly_api_error(e) -> str:
+def _friendly_api_error(e, provider: str = "") -> str:
     """Turn a provider API exception into a clear, actionable message (no traceback)."""
     name = type(e).__name__
     status = getattr(e, "status_code", None)
+    prov = provider or "Your provider"
     if name == "RateLimitError" or status == 429:
-        return (
-            "**Rate limit or quota reached** — your provider stopped accepting requests.\n\n"
-            "On Google Gemini's **free tier** this is usually the **daily request cap**, which "
-            "resets around midnight Pacific. To finish now, switch in the sidebar to a higher-limit "
-            "model — **Gemini 2.5 Flash** has a much larger free daily allowance than Flash Lite — "
-            "or to a paid model/provider, then run coding again.\n\n"
-            "_Note: partial progress isn't saved, so coding restarts from the beginning._"
-        )
+        msg = f"**Rate limit or quota reached** — {prov} stopped accepting requests.\n\n"
+        if provider == "Google Gemini":
+            msg += (
+                "On Gemini's **free tier** this is usually the **daily request cap**, which resets "
+                "around midnight Pacific. To finish now, switch in the sidebar to **Gemini 2.5 Flash** "
+                "(a much larger free daily allowance than Flash Lite) or to a paid model, then run coding again."
+            )
+        else:
+            msg += (
+                "This can mean a per-minute rate limit, an exhausted daily quota, or no remaining "
+                "credits. Check your account's limits and billing, wait a moment, or switch to a "
+                "different model or provider in the sidebar, then run coding again."
+            )
+        return msg + "\n\n_Note: partial progress isn't saved, so coding restarts from the beginning._"
     if name == "AuthenticationError" or status == 401:
-        return "**Authentication failed** — check that your API key is valid for the selected provider."
+        return f"**Authentication failed** — check that your API key is valid for {prov}."
     if name == "NotFoundError" or status == 404:
         return ("**Model not found** — the selected model ID may be wrong or unavailable on your key. "
                 "Double-check the model in the sidebar.")
@@ -978,7 +985,7 @@ elif st.session_state.step == 4:
                     )
             except Exception as _coding_err:
                 progress_bar.empty()
-                st.error(_friendly_api_error(_coding_err), icon="⚠️")
+                st.error(_friendly_api_error(_coding_err, st.session_state.provider), icon="⚠️")
                 _track("coding_failed",
                        provider=st.session_state.provider,
                        model=st.session_state.model,
