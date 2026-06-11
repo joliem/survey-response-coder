@@ -116,7 +116,7 @@ _SCROLL_TOP = """<script>
 </script>"""
 
 from sample_data import load_sample
-from providers import suggest_themes, code_responses, split_theme, select_quotes, PROVIDERS, DEFAULT_MODEL, NONE_THEME
+from providers import suggest_themes, code_responses, split_theme, select_quotes, preflight_check, PROVIDERS, DEFAULT_MODEL, NONE_THEME
 from demo_data import suggest_themes_demo, code_responses_demo, select_quotes_demo
 from quotes import build_candidates
 from analysis import (
@@ -161,6 +161,14 @@ def _friendly_api_error(e, provider: str = "") -> str:
     status = getattr(e, "status_code", None)
     prov = provider or "Your provider"
     model = st.session_state.get("model", "")
+    blob = (str(getattr(e, "body", "")) + " " + str(e)).lower()
+    # Out of credits (OpenAI/Anthropic) — a 429, but billing not throttling
+    if provider != "Google Gemini" and "insufficient_quota" in blob:
+        return (
+            f"**Out of credits** — {prov} reports no remaining balance for this key. "
+            "Add credit/billing in your provider dashboard, or switch to a provider/model whose "
+            "key has credit, then try again."
+        )
     if name == "RateLimitError" or status == 429:
         msg = f"**Rate limit or quota reached** — {prov} stopped accepting requests.\n\n"
         if provider == "Google Gemini":
@@ -389,6 +397,15 @@ with st.sidebar:
         if _key_ok:
             _display_model = _effective_model if _effective_model != "__custom__" else "your custom model"
             st.success(f"API key set — ready to use {_display_model}.", icon="⚡")
+            if st.button("✓ Test key & quota", use_container_width=True,
+                         help="Sends one tiny request to confirm the key works and isn't out of "
+                              "credits or already rate-limited — before you start a long run."):
+                try:
+                    with st.spinner("Testing…"):
+                        preflight_check(selected_provider, _effective_model, _entered)
+                    st.success("Key works and has quota available. ✓", icon="✅")
+                except Exception as _pf_err:
+                    st.error(_friendly_api_error(_pf_err, selected_provider), icon="⚠️")
         else:
             if pinfo["free_tier"]:
                 st.info(
@@ -1025,6 +1042,17 @@ elif st.session_state.step == 4:
             if not st.session_state.demo_mode and not st.session_state.api_key:
                 st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
                 st.stop()
+
+            # Preflight: verify the key/model can make calls before a long run, so we
+            # never start coding only to fail partway (out of credits / already capped).
+            if not st.session_state.demo_mode:
+                try:
+                    with st.spinner("Checking your key & quota…"):
+                        preflight_check(st.session_state.provider, st.session_state.model,
+                                        st.session_state.api_key or None)
+                except Exception as _pf_err:
+                    st.error(_friendly_api_error(_pf_err, st.session_state.provider), icon="⚠️")
+                    st.stop()
 
             # Reuse the checkpoint when resuming; otherwise start a fresh one
             if not _resume:

@@ -461,6 +461,28 @@ def _parse_batch(raw: str, results: list) -> None:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+def preflight_check(provider, model, api_key):
+    """Make one tiny request to verify the key/model work and aren't already capped.
+
+    Single attempt (no retries) so it's fast. Raises the provider's exception on
+    failure (bad key, no credits, rate/quota limit, unknown model); returns True on
+    success. Costs ~1 token.
+    """
+    if provider == "Anthropic":
+        client = _anthropic_client(api_key)
+        client.messages.create(
+            model=model, max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+    else:
+        client = _openai_client(provider, api_key)
+        client.chat.completions.create(
+            model=model, max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+    return True
+
+
 def suggest_themes(provider, model, api_key, responses, user_seeds="",
                    max_responses=500, min_themes=5, max_themes=8):
     if provider == "Anthropic":
