@@ -1288,47 +1288,77 @@ elif st.session_state.step == 5:
     _SMALL_THEME = 6  # themes with fewer than this get 1 quote max, no nuance
     _tax_lookup = {t["name"]: t for t in st.session_state.taxonomy}
 
-    if st.button("✨ Generate representative quotes", key="gen_quotes") or st.session_state.theme_quotes:
+    def _generate_quotes():
+        tq = {}
+        for theme in _theme_order:
+            sub = covariate_df[covariate_df["primary_theme"] == theme]
+            cands = build_candidates(sub, text_col)
+            is_small = len(sub) < _SMALL_THEME
+            max_rep = 1 if is_small else 3
+            allow_nuance = not is_small
+            theme_dict = _tax_lookup.get(theme, {"name": theme, "description": ""})
+            if st.session_state.demo_mode:
+                picks = select_quotes_demo(theme_dict, cands, max_rep, allow_nuance)
+            else:
+                picks = select_quotes(
+                    st.session_state.provider, st.session_state.model,
+                    st.session_state.api_key or None,
+                    theme_dict, cands, max_rep, allow_nuance,
+                )
+            tq[theme] = picks
+        st.session_state.theme_quotes = tq
+        _track("quotes_generated", demo_mode=st.session_state.demo_mode)
+
+    def _render_quotes():
+        for theme in _theme_order:
+            picks = st.session_state.theme_quotes.get(theme, [])
+            _n = int((covariate_df["primary_theme"] == theme).sum())
+            st.markdown(f"**{theme}**  ·  {_n} response{'s' if _n != 1 else ''}")
+            if not picks:
+                st.caption("_No sufficiently representative quote found — this may be a thin theme._")
+                continue
+            for p in picks:
+                _quote(p["quote"])
+                _label = "Less common angle" if p["role"] == "nuance" else "Representative"
+                st.caption(_label + (f" · {p['reason']}" if p.get("reason") else ""))
+            st.write("")
+
+    if st.session_state.demo_mode:
+        # Free and instant in demo mode — generate automatically, no button.
         if not st.session_state.theme_quotes:
+            with st.spinner("Selecting representative quotes…"):
+                _generate_quotes()
+        _render_quotes()
+    elif st.session_state.theme_quotes:
+        _render_quotes()
+    else:
+        # Live mode: optional (costs an API call per theme) → button + cost estimate.
+        _qp = PROVIDERS.get(st.session_state.provider, {})
+        _qprice = _qp.get("pricing", {}).get(st.session_state.model, {})
+        _n_themes = len(_theme_order)
+        if _qp.get("free_tier"):
+            _q_cost_note = f"Uses your selected model — typically within {st.session_state.provider}'s free tier."
+        elif _qprice:
+            _q_total = (_n_themes * 2500 / 1_000_000 * _qprice["input"]
+                        + _n_themes * 350 / 1_000_000 * _qprice["output"])
+            _q_cost_note = (
+                f"Makes one small API call per theme ({_n_themes} themes) — "
+                f"about \${_q_total:.3f} total with your selected model. Cached afterward."
+            )
+        else:
+            _q_cost_note = (
+                f"Makes one small API call per theme ({_n_themes} themes) using your selected model. "
+                "Cached afterward."
+            )
+        if st.button("✨ Generate representative quotes", key="gen_quotes"):
             try:
                 with st.spinner("Selecting representative quotes…"):
-                    tq = {}
-                    for theme in _theme_order:
-                        sub = covariate_df[covariate_df["primary_theme"] == theme]
-                        cands = build_candidates(sub, text_col)
-                        is_small = len(sub) < _SMALL_THEME
-                        max_rep = 1 if is_small else 3
-                        allow_nuance = not is_small
-                        theme_dict = _tax_lookup.get(theme, {"name": theme, "description": ""})
-                        if st.session_state.demo_mode:
-                            picks = select_quotes_demo(theme_dict, cands, max_rep, allow_nuance)
-                        else:
-                            picks = select_quotes(
-                                st.session_state.provider, st.session_state.model,
-                                st.session_state.api_key or None,
-                                theme_dict, cands, max_rep, allow_nuance,
-                            )
-                        tq[theme] = picks
-                st.session_state.theme_quotes = tq
-                _track("quotes_generated", demo_mode=st.session_state.demo_mode)
+                    _generate_quotes()
+                st.rerun()
             except Exception as e:
+                st.session_state.theme_quotes = {}
                 st.error(f"Could not generate quotes: {e}")
-
-        if st.session_state.theme_quotes:
-            for theme in _theme_order:
-                picks = st.session_state.theme_quotes.get(theme, [])
-                _n = int((covariate_df["primary_theme"] == theme).sum())
-                st.markdown(f"**{theme}**  ·  {_n} response{'s' if _n != 1 else ''}")
-                if not picks:
-                    st.caption("_No sufficiently representative quote found — this may be a thin theme._")
-                    continue
-                for p in picks:
-                    _quote(p["quote"])
-                    _label = "Less common angle" if p["role"] == "nuance" else "Representative"
-                    st.caption(_label + (f" · {p['reason']}" if p.get("reason") else ""))
-                st.write("")
-    else:
-        st.caption("_Click above to pull a few verbatim quotes per theme (uses your selected model)._")
+        st.caption(_q_cost_note)
 
     # ── Covariate Analysis ──────────────────────────────────────
     if covariate_cols:
