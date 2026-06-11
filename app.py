@@ -60,6 +60,7 @@ def _track(event: str, **kwargs):
         "city": loc.get("city", ""),
         "region": loc.get("regionName", ""),
         "country": loc.get("country", ""),
+        "debug": loc.get("_debug", ""),
         **kwargs,
     }
     def _send():
