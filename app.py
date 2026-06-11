@@ -80,7 +80,21 @@ def _feedback_form(key: str):
         )
         if st.form_submit_button("Send", use_container_width=True):
             if fb_text.strip():
-                _track("feedback", feedback_text=fb_text.strip(), contact=fb_contact.strip())
+                _step_names = {
+                    1: "1. Load Data",
+                    2: "2. Explore Themes",
+                    3: "3. Refine Taxonomy",
+                    4: "4. Code Responses",
+                    5: "5. Analyze",
+                }
+                _cur_step = st.session_state.get("step", 0)
+                _track(
+                    "feedback",
+                    feedback_text=fb_text.strip(),
+                    contact=fb_contact.strip(),
+                    page=_step_names.get(_cur_step, str(_cur_step)),
+                    source=key,
+                )
                 st.success("Thanks — your feedback was sent! 🙏")
             else:
                 st.warning("Please enter a comment before sending.")
