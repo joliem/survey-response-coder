@@ -658,6 +658,7 @@ elif st.session_state.step == 3:
                     })
                     st.session_state.taxonomy = new_taxonomy
                     st.session_state.preview_sample = None
+                    _track("themes_merged", num_merged=len(to_merge))
                     st.rerun()
 
     with col_split:
@@ -731,6 +732,7 @@ elif st.session_state.step == 3:
 
                     st.session_state.taxonomy = new_taxonomy
                     st.session_state.preview_sample = None
+                    _track("theme_split")
                     st.rerun()
 
     # ── Preview ────────────────────────────────────────────────
@@ -819,6 +821,7 @@ elif st.session_state.step == 3:
         if st.button("Finalize Taxonomy & Set Coding Options →", type="primary", use_container_width=True):
             st.session_state.taxonomy = _read_taxonomy(edited)
             st.session_state.coded_df = None
+            _track("taxonomy_finalized", num_themes=len(st.session_state.taxonomy))
             go_to(4)
             st.rerun()
 
@@ -929,6 +932,7 @@ elif st.session_state.step == 4:
         st.success(f"Coding complete — {len(st.session_state.coded_df):,} responses coded.")
         if st.button("↺ Re-run Coding with New Options", key="step4_rerun"):
             st.session_state.coded_df = None
+            _track("coding_rerun")
             st.rerun()
 
     if st.session_state.coded_df is not None:
@@ -987,6 +991,7 @@ elif st.session_state.step == 4:
                 if irr_n < 10:
                     st.caption("Fewer than 10 responses gives very noisy estimates — results are illustrative only.")
                 if st.button("Begin Rating", key="irr_start"):
+                    _track("irr_started", n=irr_n)
                     sample_rows = coded_df.sample(min(irr_n, len(coded_df)), random_state=42).reset_index(drop=True)
                     st.session_state.irr_sample = [
                         {"text": row[text_col], "model_theme": row["primary_theme"]}
