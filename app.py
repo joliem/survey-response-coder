@@ -31,21 +31,22 @@ def _get_ip():
 def _get_location(ip: str) -> dict:
     """Look up city/region/country for an IP using ipinfo.io."""
     if not ip or ip.startswith("127.") or ip.startswith("::1"):
-        return {}
+        return {"_debug": f"skipped:{ip}"}
     try:
         import requests as _req
         r = _req.get(f"https://ipinfo.io/{ip}/json", timeout=3)
+        raw = r.text[:300]
         if r.status_code == 200:
             data = r.json()
-            # ipinfo returns {"city": "...", "region": "...", "country": "US", ...}
             return {
                 "city": data.get("city", ""),
                 "regionName": data.get("region", ""),
                 "country": data.get("country", ""),
+                "_debug": f"ok:{raw}",
             }
-    except Exception:
-        pass
-    return {}
+        return {"_debug": f"status:{r.status_code}:{raw}"}
+    except Exception as ex:
+        return {"_debug": f"error:{ex}"}
 
 def _track(event: str, **kwargs):
     """Fire-and-forget event to Google Sheets. Never raises — tracking must not break the app."""
