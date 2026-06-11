@@ -62,16 +62,18 @@ PROVIDERS = {
         "label": "Google Gemini",
         "models": [
             {"id": "gemini-2.5-pro",        "label": "Gemini 2.5 Pro       (most capable · paid)"},
-            {"id": "gemini-2.5-flash",      "label": "Gemini 2.5 Flash     (recommended free · best for full runs)"},
-            {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite (fast, but low daily free limit)"},
+            {"id": "gemini-2.5-flash",      "label": "Gemini 2.5 Flash     (free · best for taxonomy + small runs)"},
+            {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite (free · smallest daily limit)"},
             {"id": "gemini-2.0-flash",      "label": "Gemini 2.0 Flash     (paid)"},
             _CUSTOM,
         ],
         "free_tier": True,
         "free_tier_note": (
-            "**2.5 Flash** has the most generous free tier (~1,500 requests/day) — best for coding "
-            "a full dataset. **2.5 Flash Lite** is also free but has a much smaller daily cap, so "
-            "large coding runs can hit the wall partway. 2.5 Pro and 2.0 Flash require billing."
+            "Great for the **taxonomy step** and **small / test runs** (a few hundred responses). "
+            "**2.5 Flash** has the largest free daily allowance, **Flash Lite** the smallest. For "
+            "**full coding of larger datasets**, free daily caps and free-hosting time limits make a "
+            "paid model (e.g. OpenAI GPT-4o-mini — fast, a few cents) far more reliable. "
+            "2.5 Pro and 2.0 Flash require billing."
         ),
         "key_env": "GEMINI_API_KEY",
         "key_url": "https://aistudio.google.com/app/apikey",

@@ -631,8 +631,9 @@ elif st.session_state.step == 2:
         _pricing_link = f" [Current rates ↗]({_pricing_url})" if _pricing_url else ""
         if PROVIDERS.get(_provider, {}).get("free_tier"):
             _cost_note = (
-                f"{_provider} free tier covers up to 1,500 requests/day — "
-                f"taxonomy suggestion and most coding runs will be within the free limit."
+                f"{_provider} free tier is ideal for this **taxonomy step** and **small / test runs**. "
+                "For coding a larger dataset, the free daily cap (and free-hosting time limits) make a "
+                "paid model more reliable — see the note in the sidebar."
             )
         elif not _pricing or _model == "__custom__":
             _cost_note = (

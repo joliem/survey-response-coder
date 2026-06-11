@@ -77,11 +77,13 @@ All models share the same workflow. Use the "Other (enter model ID)…" option i
 
 Costs depend on dataset size, model, and number of iterations. As a rough guide for a 2,000-response dataset:
 
-- **GPT-4o Mini**: ~$0.02 per coding run
-- **Gemini 2.5 Flash**: within free tier for most datasets
+- **GPT-4o Mini**: ~$0.02 per coding run — fast, and the most reliable choice for full datasets
 - **Claude Haiku 4.5**: ~$0.03 per coding run
+- **Gemini (free tier)**: great for generating the taxonomy and coding small / test runs (a few hundred responses), but free daily request caps make it unsuitable for coding large datasets — use a paid model for those
 
 The app shows a per-run cost estimate before you start.
+
+> **Note on large runs:** coding is a long sequence of API calls. On free-tier models (rate-throttled) and free hosting (which can reset a long-running session), large runs are best done on a fast paid model, in smaller subsets, or in chunks.
 
 ---
 
