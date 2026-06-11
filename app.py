@@ -116,14 +116,14 @@ _SCROLL_TOP = """<script>
 </script>"""
 
 from sample_data import load_sample
-from providers import suggest_themes, code_responses, split_theme, PROVIDERS, DEFAULT_MODEL, NONE_THEME
-from demo_data import suggest_themes_demo, code_responses_demo
+from providers import suggest_themes, code_responses, split_theme, select_quotes, PROVIDERS, DEFAULT_MODEL, NONE_THEME
+from demo_data import suggest_themes_demo, code_responses_demo, select_quotes_demo
+from quotes import build_candidates
 from analysis import (
     theme_bar_chart,
     covariate_heatmap,
     covariate_stacked_bar,
     chi_square_summary,
-    top_words_per_theme,
     detect_covariate_type,
     theme_over_time_chart,
     theme_over_time_line,
@@ -194,6 +194,7 @@ DEFAULTS = {
     "irr_labels": {},
     "irr_pos": 0,
     "rerun_requested": False,
+    "theme_quotes": {},       # cached representative quotes per theme (lazy-computed)
     "_rendered_step": -1,
 }
 for k, v in DEFAULTS.items():
@@ -968,11 +969,13 @@ elif st.session_state.step == 4:
             if include_emotion:
                 coded_df["emotion"] = [r["emotion"] for r in results]
             st.session_state.coded_df = coded_df
+            st.session_state.theme_quotes = {}  # invalidate cached quotes
             st.rerun()
     else:
         st.success(f"Coding complete — {len(st.session_state.coded_df):,} responses coded.")
         if st.button("↺ Re-run Coding with New Options", key="step4_rerun"):
             st.session_state.coded_df = None
+            st.session_state.theme_quotes = {}
             _track("coding_rerun")
             st.rerun()
 
@@ -1274,18 +1277,58 @@ elif st.session_state.step == 5:
                 "whether the taxonomy needs a new theme."
             )
 
-    # ── Top Words ───────────────────────────────────────────────
-    with st.expander("Top Words per Theme"):
-        words = top_words_per_theme(covariate_df, "primary_theme", text_col, theme_order=_theme_order)
-        cols = st.columns(min(3, len(words)))
-        for i, (theme, word_list) in enumerate(words.items()):
-            with cols[i % len(cols)]:
-                st.markdown(f"**{theme}**")
-                st.markdown(", ".join(word_list))
-        st.caption(
-            "Most frequent non-stopword terms in responses assigned to each theme (by primary theme). "
-            "Useful for validating that theme labels reflect the actual language respondents used."
-        )
+    # ── Representative Quotes ───────────────────────────────────
+    st.subheader("Representative Quotes")
+    st.caption(
+        "Verbatim excerpts that best capture each theme — the prevailing view, plus the occasional "
+        "less-common but meaningful angle. Quotes are copied **exactly** from responses, never paraphrased. "
+        "Selection favors substantive comments that name specific pain points or requests."
+    )
+
+    _SMALL_THEME = 6  # themes with fewer than this get 1 quote max, no nuance
+    _tax_lookup = {t["name"]: t for t in st.session_state.taxonomy}
+
+    if st.button("✨ Generate representative quotes", key="gen_quotes") or st.session_state.theme_quotes:
+        if not st.session_state.theme_quotes:
+            try:
+                with st.spinner("Selecting representative quotes…"):
+                    tq = {}
+                    for theme in _theme_order:
+                        sub = covariate_df[covariate_df["primary_theme"] == theme]
+                        cands = build_candidates(sub, text_col)
+                        is_small = len(sub) < _SMALL_THEME
+                        max_rep = 1 if is_small else 3
+                        allow_nuance = not is_small
+                        theme_dict = _tax_lookup.get(theme, {"name": theme, "description": ""})
+                        if st.session_state.demo_mode:
+                            picks = select_quotes_demo(theme_dict, cands, max_rep, allow_nuance)
+                        else:
+                            picks = select_quotes(
+                                st.session_state.provider, st.session_state.model,
+                                st.session_state.api_key or None,
+                                theme_dict, cands, max_rep, allow_nuance,
+                            )
+                        tq[theme] = picks
+                st.session_state.theme_quotes = tq
+                _track("quotes_generated", demo_mode=st.session_state.demo_mode)
+            except Exception as e:
+                st.error(f"Could not generate quotes: {e}")
+
+        if st.session_state.theme_quotes:
+            for theme in _theme_order:
+                picks = st.session_state.theme_quotes.get(theme, [])
+                _n = int((covariate_df["primary_theme"] == theme).sum())
+                st.markdown(f"**{theme}**  ·  {_n} response{'s' if _n != 1 else ''}")
+                if not picks:
+                    st.caption("_No sufficiently representative quote found — this may be a thin theme._")
+                    continue
+                for p in picks:
+                    _quote(p["quote"])
+                    _label = "Less common angle" if p["role"] == "nuance" else "Representative"
+                    st.caption(_label + (f" · {p['reason']}" if p.get("reason") else ""))
+                st.write("")
+    else:
+        st.caption("_Click above to pull a few verbatim quotes per theme (uses your selected model)._")
 
     # ── Covariate Analysis ──────────────────────────────────────
     if covariate_cols:
@@ -1793,6 +1836,17 @@ elif st.session_state.step == 5:
     _rename_cols = {"theme": "theme_list"} if _is_multi else {}
     _download_df = coded_df.drop(columns=_drop_cols).rename(columns=_rename_cols)
 
+    # Flag responses surfaced as representative quotes (if generated)
+    _quotes_ready = bool(st.session_state.theme_quotes)
+    if _quotes_ready:
+        _role_by_row, _excerpt_by_row = {}, {}
+        for _picks in st.session_state.theme_quotes.values():
+            for _p in _picks:
+                _role_by_row[_p["row"]] = _p["role"]
+                _excerpt_by_row[_p["row"]] = _p["quote"]
+        _download_df["highlighted_quote"] = _download_df.index.map(lambda i: _role_by_row.get(i, ""))
+        _download_df["quote_excerpt"] = _download_df.index.map(lambda i: _excerpt_by_row.get(i, ""))
+
     _dl_col1, _dl_col2 = st.columns(2)
     with _dl_col1:
         if st.download_button(
@@ -1808,6 +1862,9 @@ elif st.session_state.step == 5:
             "`primary_theme`, `confidence`, "
             + ("`theme_list` (all assigned themes), " if _is_multi else "")
             + "and `valence_score` / `valence_label` / `emotion` if enabled."
+            + (" Plus `highlighted_quote` / `quote_excerpt` marking responses chosen as representative quotes."
+               if _quotes_ready else
+               " *Generate representative quotes above to also flag them in the download.*")
         )
     with _dl_col2:
         _nb_include_valence = "valence_score" in coded_df.columns
@@ -1820,6 +1877,7 @@ elif st.session_state.step == 5:
             include_valence=_nb_include_valence,
             include_emotion=_nb_include_emotion,
             theme_order=_theme_order,
+            quotes=st.session_state.theme_quotes or None,
         )
         if st.download_button(
             "⬇ Analysis Notebook (Jupyter)",

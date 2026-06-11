@@ -77,6 +77,7 @@ def generate_notebook(
     include_valence: bool = False,
     include_emotion: bool = False,
     theme_order: list | None = None,
+    quotes: dict | None = None,
 ) -> bytes:
     """Return .ipynb bytes for a self-contained analysis report."""
     is_multi = "theme_list" in coded_df.columns
@@ -107,6 +108,27 @@ def generate_notebook(
         f"---\n\n"
         f"## Coding Taxonomy\n\n{taxonomy_lines}"
     ))
+
+    # ── Representative quotes (verbatim) ────────────────────────
+    if quotes:
+        quote_lines = [
+            "## Representative Quotes\n",
+            "_Verbatim excerpts selected to capture each theme — the prevailing view plus the "
+            "occasional less-common angle. Quotes are copied exactly from responses._\n",
+        ]
+        any_quotes = False
+        for theme in (theme_order or list(quotes.keys())):
+            picks = quotes.get(theme) or []
+            if not picks:
+                continue
+            any_quotes = True
+            quote_lines.append(f"### {theme}")
+            for p in picks:
+                tag = " _(less common angle)_" if p.get("role") == "nuance" else ""
+                excerpt = str(p.get("quote", "")).replace("\n", " ").strip()
+                quote_lines.append(f"> {excerpt}{tag}\n")
+        if any_quotes:
+            cells.append(_md("\n".join(quote_lines)))
 
     # ── Setup & load ───────────────────────────────────────────
     cells.append(_code(

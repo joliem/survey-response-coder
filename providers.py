@@ -450,3 +450,72 @@ def split_theme(provider, model, api_key, theme, new_name_1, new_name_2, sample_
     if provider == "Anthropic":
         return _split_anthropic(model, api_key, theme, new_name_1, new_name_2, sample_responses)
     return _split_openai_compat(provider, model, api_key, theme, new_name_1, new_name_2, sample_responses)
+
+
+# ── Representative quote selection ─────────────────────────────────────────────
+
+_QUOTE_SYSTEM = (
+    "You help a researcher pull representative VERBATIM quotes from open-ended survey "
+    "responses that were already coded to a theme. Your job is SELECTION and EXTRACTION ONLY. "
+    "You must NEVER paraphrase, rewrite, fix grammar, translate, or invent text. Every quote "
+    "you return must be copied EXACTLY, word-for-word, from one of the provided responses. You "
+    "may shorten by quoting a contiguous span (a sentence or two), or join two contiguous spans "
+    "with an ellipsis (…), but you may not alter any words within a span."
+)
+
+
+def _quote_user_prompt(theme, candidates, max_representative, allow_nuance):
+    listing = "\n\n".join(f"[{c['id']}] {c['text']}" for c in candidates)
+    instr = (
+        f'Theme: "{theme["name"]}"\n'
+        f'Definition: {theme.get("description", "")}\n\n'
+        f"Responses coded to this theme:\n\n{listing}\n\n"
+        f"Select up to {max_representative} response(s) that best REPRESENT this theme. "
+        "Prioritise quotes with substance — ones that name a specific pain point or request a "
+        "specific improvement, and that reflect the prevailing view within the theme. "
+        "Avoid generic, boilerplate, or purely procedural/legalistic text. "
+    )
+    if allow_nuance:
+        instr += (
+            'Additionally, you may select up to 1 response that captures a meaningful but '
+            'LESS COMMON angle within this theme — mark its role "nuance". '
+        )
+    instr += (
+        "Only include a quote if it is genuinely substantive; it is better to return fewer "
+        "(even zero) than to pad with weak quotes. For each selection, extract the single most "
+        "representative verbatim excerpt (ideally 25 words or fewer, never more than ~40), "
+        "copied exactly from that response.\n\n"
+        "Return ONLY valid JSON — no prose, no markdown fences:\n"
+        '{"quotes": [{"id": <number>, "role": "representative" | "nuance", '
+        '"quote": "<verbatim excerpt>", "reason": "<why, 12 words max>"}]}'
+    )
+    return instr
+
+
+def select_quotes(provider, model, api_key, theme, candidates,
+                  max_representative=3, allow_nuance=True):
+    """Pick representative + nuance verbatim quotes for a single theme.
+
+    `candidates` comes from quotes.build_candidates(). Excerpts are validated as
+    verbatim downstream; any that aren't are replaced with a real source sentence.
+    """
+    from quotes import finalize_picks
+    if not candidates:
+        return []
+    user = _quote_user_prompt(theme, candidates, max_representative, allow_nuance)
+    if provider == "Anthropic":
+        client = _anthropic_client(api_key)
+        msg = client.messages.create(
+            model=model, max_tokens=1500, system=_QUOTE_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+        )
+        raw = msg.content[0].text
+    else:
+        client = _openai_client(provider, api_key)
+        raw = _chat(client, model, _QUOTE_SYSTEM, user, max_tokens=1500)
+    try:
+        parsed = _robust_json_loads(raw)
+        picks = parsed.get("quotes", []) if isinstance(parsed, dict) else parsed
+    except Exception:
+        picks = []
+    return finalize_picks(picks, candidates, max_representative, allow_nuance)
