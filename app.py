@@ -155,6 +155,29 @@ def _quote(text: str) -> None:
     )
 
 
+def _friendly_api_error(e) -> str:
+    """Turn a provider API exception into a clear, actionable message (no traceback)."""
+    name = type(e).__name__
+    status = getattr(e, "status_code", None)
+    if name == "RateLimitError" or status == 429:
+        return (
+            "**Rate limit or quota reached** — your provider stopped accepting requests.\n\n"
+            "On Google Gemini's **free tier** this is usually the **daily request cap**, which "
+            "resets around midnight Pacific. To finish now, switch in the sidebar to a higher-limit "
+            "model — **Gemini 2.5 Flash** has a much larger free daily allowance than Flash Lite — "
+            "or to a paid model/provider, then run coding again.\n\n"
+            "_Note: partial progress isn't saved, so coding restarts from the beginning._"
+        )
+    if name == "AuthenticationError" or status == 401:
+        return "**Authentication failed** — check that your API key is valid for the selected provider."
+    if name == "NotFoundError" or status == 404:
+        return ("**Model not found** — the selected model ID may be wrong or unavailable on your key. "
+                "Double-check the model in the sidebar.")
+    if name == "InternalServerError" or status in (500, 503):
+        return "**The model is temporarily unavailable** (server error). Wait a moment and run coding again."
+    return f"**Coding failed** ({name}). Try again, or switch model/provider in the sidebar."
+
+
 st.set_page_config(
     page_title="Survey Response Coder",
     page_icon="📊",
@@ -937,21 +960,30 @@ elif st.session_state.step == 4:
             def update_progress(pct: float):
                 progress_bar.progress(pct, text=f"Coding responses... {int(pct * 100)}%")
 
-            if st.session_state.demo_mode:
-                results = code_responses_demo(
-                    responses, taxonomy, df=df, progress_callback=update_progress,
-                    multi_theme=multi_theme,
-                    include_valence=include_valence, include_emotion=include_emotion,
-                )
-            else:
-                results = code_responses(
-                    st.session_state.provider,
-                    st.session_state.model,
-                    st.session_state.api_key or None,
-                    responses, taxonomy, progress_callback=update_progress,
-                    multi_theme=multi_theme,
-                    include_valence=include_valence, include_emotion=include_emotion,
-                )
+            try:
+                if st.session_state.demo_mode:
+                    results = code_responses_demo(
+                        responses, taxonomy, df=df, progress_callback=update_progress,
+                        multi_theme=multi_theme,
+                        include_valence=include_valence, include_emotion=include_emotion,
+                    )
+                else:
+                    results = code_responses(
+                        st.session_state.provider,
+                        st.session_state.model,
+                        st.session_state.api_key or None,
+                        responses, taxonomy, progress_callback=update_progress,
+                        multi_theme=multi_theme,
+                        include_valence=include_valence, include_emotion=include_emotion,
+                    )
+            except Exception as _coding_err:
+                progress_bar.empty()
+                st.error(_friendly_api_error(_coding_err), icon="⚠️")
+                _track("coding_failed",
+                       provider=st.session_state.provider,
+                       model=st.session_state.model,
+                       error=type(_coding_err).__name__)
+                st.stop()
 
             progress_bar.progress(1.0, text="Done!")
             _track("coding_completed",

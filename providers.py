@@ -62,15 +62,16 @@ PROVIDERS = {
         "label": "Google Gemini",
         "models": [
             {"id": "gemini-2.5-pro",        "label": "Gemini 2.5 Pro       (most capable · paid)"},
-            {"id": "gemini-2.5-flash",      "label": "Gemini 2.5 Flash     (recommended · free tier)"},
-            {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite (fastest · free tier)"},
+            {"id": "gemini-2.5-flash",      "label": "Gemini 2.5 Flash     (recommended free · best for full runs)"},
+            {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite (fast, but low daily free limit)"},
             {"id": "gemini-2.0-flash",      "label": "Gemini 2.0 Flash     (paid)"},
             _CUSTOM,
         ],
         "free_tier": True,
         "free_tier_note": (
-            "2.5 Flash and 2.5 Flash Lite have a free tier (up to 20–1,500 requests/day). "
-            "2.5 Pro and 2.0 Flash require billing."
+            "**2.5 Flash** has the most generous free tier (~1,500 requests/day) — best for coding "
+            "a full dataset. **2.5 Flash Lite** is also free but has a much smaller daily cap, so "
+            "large coding runs can hit the wall partway. 2.5 Pro and 2.0 Flash require billing."
         ),
         "key_env": "GEMINI_API_KEY",
         "key_url": "https://aistudio.google.com/app/apikey",
@@ -288,6 +289,21 @@ def _openai_client(provider, api_key):
     return OpenAI(api_key=api_key)
 
 
+def _is_per_day_quota(e) -> bool:
+    """True if a 429 is a per-DAY quota violation (retrying won't help until reset)."""
+    try:
+        details = e.body.get("error", {}).get("details", [])
+        for d in details:
+            if d.get("@type", "").endswith("QuotaFailure"):
+                for v in d.get("violations", []):
+                    qid = f"{v.get('quotaId', '')}{v.get('quotaMetric', '')}".lower()
+                    if "perday" in qid:
+                        return True
+    except Exception:
+        pass
+    return False
+
+
 def _chat(client, model, system, user, max_tokens=2048, _retries=6):
     import time
     from openai import RateLimitError, InternalServerError
@@ -302,6 +318,9 @@ def _chat(client, model, system, user, max_tokens=2048, _retries=6):
             )
             return resp.choices[0].message.content
         except (RateLimitError, InternalServerError) as e:
+            # Daily quota exhausted — retrying wastes minutes for nothing; fail now.
+            if isinstance(e, RateLimitError) and _is_per_day_quota(e):
+                raise
             if attempt == _retries - 1:
                 raise
             # Try to extract retry-after delay from error details
