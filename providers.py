@@ -1,4 +1,7 @@
-"""Multi-provider LLM interface: Anthropic, OpenAI, Google Gemini."""
+"""Multi-provider LLM interface: Anthropic, OpenAI, Google Gemini.
+
+Includes representative-quote selection (select_quotes).
+"""
 
 import json
 
