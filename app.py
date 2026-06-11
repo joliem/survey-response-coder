@@ -172,17 +172,33 @@ def _friendly_api_error(e, provider: str = "") -> str:
     if name == "RateLimitError" or status == 429:
         msg = f"**Rate limit or quota reached** — {prov} stopped accepting requests.\n\n"
         if provider == "Google Gemini":
-            msg += "On Gemini's **free tier** this is the **daily request cap**, which resets around midnight Pacific. "
-            if model == "gemini-2.5-flash-lite":
+            _is_day = ("perday" in blob) or ("per day" in blob)
+            _is_min = ("perminute" in blob) or ("per minute" in blob)
+            if _is_day:
                 msg += (
-                    "Switch in the sidebar to **Gemini 2.5 Flash** (a larger free daily allowance) or to "
-                    "a paid model, then run coding again."
+                    "This is Gemini's **daily** request cap (free tier), which resets **once a day, "
+                    "around midnight Pacific** — not throughout the day. "
+                )
+            elif _is_min:
+                msg += (
+                    "This is Gemini's **per-minute** rate limit (free tier), which resets within a minute. "
+                    "The app normally waits and retries automatically, so seeing it here means the free "
+                    "tier is heavily throttled right now — wait a minute and try again. "
                 )
             else:
                 msg += (
-                    "You're already on Gemini's most generous free model, so free quota likely isn't "
-                    "enough for this dataset today. Either wait for the daily reset, or switch to a paid "
-                    "model — OpenAI **GPT-4o-mini** is fast and only a few cents for a full run — then run again."
+                    "This is a Gemini free-tier limit — either the **per-minute** throttle (resets within "
+                    "a minute) or the **daily** cap (resets ~midnight Pacific). "
+                )
+            if model == "gemini-2.5-flash-lite":
+                msg += (
+                    "Flash Lite has the smallest free allowance — switch to **Gemini 2.5 Flash**, or if "
+                    "that's also spent, a paid model (OpenAI **GPT-4o-mini** is fast and a few cents)."
+                )
+            else:
+                msg += (
+                    "For a full dataset, a paid model — OpenAI **GPT-4o-mini**, fast and a few cents — is "
+                    "much more reliable than waiting on free quota."
                 )
         else:
             msg += (
