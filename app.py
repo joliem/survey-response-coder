@@ -362,6 +362,7 @@ with st.sidebar:
         _feedback_form("sidebar")
 
     st.caption("Powered by AI · Built with Streamlit")
+    st.caption("© 2026 [Jolie Martin](https://github.com/joliem/survey-response-coder)")
 
 
 # Scroll to top only when navigating to a new step, not on widget re-renders
