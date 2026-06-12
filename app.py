@@ -493,6 +493,15 @@ with st.sidebar:
     st.caption("© 2026 [Jolie Martin](https://github.com/joliem/survey-response-coder)")
 
 
+# Guard against an inconsistent step (e.g. after a session reset that left `step`
+# ahead of the data it needs) — clamp back to the earliest step with prerequisites met.
+if st.session_state.step >= 2 and st.session_state.df is None:
+    st.session_state.step = 1
+if st.session_state.step >= 4 and not st.session_state.taxonomy:
+    st.session_state.step = 2
+if st.session_state.step == 5 and st.session_state.coded_df is None:
+    st.session_state.step = 4
+
 # Scroll to top only when navigating to a new step, not on widget re-renders
 if st.session_state._rendered_step != st.session_state.step:
     _components.html(_SCROLL_TOP, height=1)
@@ -1132,29 +1141,17 @@ elif st.session_state.step == 4:
         _done = len(_prog["results"]) if _prog else 0
         _resume = bool(_prog) and 0 < _done < _n_total
 
-        # Pre-run advisory: long runs on free hosting risk a session reset that
-        # loses in-progress coding — independent of how much quota/credit you have.
+        # Pre-run advisory: set expectations on time + the refresh-loses-progress caveat.
         _fast_provider = st.session_state.provider in ("OpenAI", "Anthropic")  # paid, high-throughput
-        _warn_threshold = 2000 if _fast_provider else 300
-        if not st.session_state.demo_mode and _n_total > _warn_threshold:
+        if not st.session_state.demo_mode and _n_total > 100:
             _batches = (_n_total + 19) // 20  # coding runs in batches of 20
             _est_min = max(1, round(_batches * (3 if _fast_provider else 6) / 60))
-            _adv = (
-                f"**Sizable run:** ~{_batches:,} requests, roughly **{_est_min}+ min**. "
-                "Free-hosted apps can reset the session during a long run, which loses in-progress "
-                "coding — the **Resume** checkpoint survives an in-app error, but **not** a full "
-                "page/session reset, so avoid refreshing the tab while it runs. "
+            st.warning(
+                f"Coding {_n_total:,} responses is expected to take roughly **{_est_min} min**. "
+                "Avoid refreshing the page while it runs — that loses progress. If you hit your "
+                "model's request limit, click **Resume** to continue with a different (paid) model.",
+                icon="⏱️",
             )
-            if _fast_provider:
-                _adv += "Consider splitting very large datasets into chunks."
-            else:
-                if st.session_state.provider == "Google Gemini":
-                    _adv += "On Gemini's free tier it may also exceed today's daily request cap. "
-                _adv += (
-                    "For a smoother run: use a fast paid model (e.g. **GPT-4.1 nano**), code a "
-                    "**smaller subset**, or split the dataset into chunks."
-                )
-            st.warning(_adv, icon="⏱️")
 
         _col1, _col2 = st.columns([1, 4])
         with _col1:
