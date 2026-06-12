@@ -260,7 +260,7 @@ def _code_anthropic(model, api_key, responses, taxonomy, batch_size,
         for _attempt in range(3):
             try:
                 msg = client.messages.create(
-                    model=model, max_tokens=4096,
+                    model=model, max_tokens=8192,
                     system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
                     messages=[{"role": "user", "content": f"Code these {len(batch)} responses:\n\n{numbered}"}],
                 )
@@ -390,7 +390,7 @@ def _code_openai_compat(provider, model, api_key, responses, taxonomy, batch_siz
         for _attempt in range(3):
             try:
                 raw = _strip_fences(_chat(client, model, system_text, user_msg,
-                                          max_tokens=4096, response_format=rf))
+                                          max_tokens=8192, response_format=rf))
                 _parse_batch(raw, results)
                 break
             except (ValueError, SyntaxError, KeyError, TypeError):
@@ -516,7 +516,7 @@ def suggest_themes(provider, model, api_key, responses, user_seeds="",
                                    max_responses, min_themes, max_themes)
 
 
-def code_responses(provider, model, api_key, responses, taxonomy, batch_size=10,
+def code_responses(provider, model, api_key, responses, taxonomy, batch_size=20,
                    progress_callback=None, multi_theme=False,
                    include_valence=False, include_emotion=False, on_batch=None):
     if provider == "Anthropic":

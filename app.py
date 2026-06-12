@@ -1137,7 +1137,7 @@ elif st.session_state.step == 4:
         _fast_provider = st.session_state.provider in ("OpenAI", "Anthropic")  # paid, high-throughput
         _warn_threshold = 2000 if _fast_provider else 300
         if not st.session_state.demo_mode and _n_total > _warn_threshold:
-            _batches = (_n_total + 9) // 10
+            _batches = (_n_total + 19) // 20  # coding runs in batches of 20
             _est_min = max(1, round(_batches * (3 if _fast_provider else 6) / 60))
             _adv = (
                 f"**Sizable run:** ~{_batches:,} requests, roughly **{_est_min}+ min**. "
