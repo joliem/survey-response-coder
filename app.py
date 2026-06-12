@@ -1016,8 +1016,11 @@ elif st.session_state.step == 3:
                 st.error(_friendly_api_error(_preview_err, st.session_state.provider), icon="⚠️")
                 st.stop()
 
+            _valid_preview = {t["name"] for t in current_taxonomy}
+            def _first_valid_theme(r):
+                return next((th for th in (r.get("themes") or []) if th in _valid_preview), NONE_THEME)
             st.session_state.preview_sample = [
-                {"text": text, "primary_theme": r["themes"][0]}
+                {"text": text, "primary_theme": _first_valid_theme(r)}
                 for text, r in zip(sample_texts, results)
             ]
             st.rerun()
@@ -1271,12 +1274,15 @@ elif st.session_state.step == 4:
             elif len(results) < _n_total:
                 results += [{"themes": [NONE_THEME], "score": None, "label": None,
                              "emotion": None, "confidence": 0.0}] * (_n_total - len(results))
-            # Enforce single-theme when multi-theme wasn't requested (a model may
-            # return >1 theme despite the instruction — keep only the primary).
-            if not multi_theme:
-                for _r in results:
-                    if len(_r.get("themes") or []) > 1:
-                        _r["themes"] = _r["themes"][:1]
+            # Validate theme names against the taxonomy — drop anything that isn't a real
+            # theme (JSON-parsing artifacts like "score" / "confidence" can leak in as fake
+            # themes). Then enforce single-theme if multi wasn't requested. All-invalid → None.
+            _valid_themes = {t["name"] for t in taxonomy}
+            for _r in results:
+                _kept = [th for th in (_r.get("themes") or []) if th in _valid_themes]
+                if not multi_theme:
+                    _kept = _kept[:1]
+                _r["themes"] = _kept or [NONE_THEME]
 
             progress_bar.progress(1.0, text="Done!")
             _track("coding_completed",
