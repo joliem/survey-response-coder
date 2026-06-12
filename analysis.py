@@ -1,5 +1,6 @@
 """Data analysis and chart generation."""
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -150,14 +151,23 @@ def covariate_stacked_bar_vertical(df: pd.DataFrame, theme_col: str, covariate_c
 
 def chi_square_summary(df: pd.DataFrame, theme_col: str, covariate_col: str) -> dict:
     ct = pd.crosstab(df[covariate_col], df[theme_col])
-    chi2, p, dof, _ = chi2_contingency(ct)
-    n = ct.values.sum()
-    cramers_v = (chi2 / (n * (min(ct.shape) - 1))) ** 0.5
+    n = int(ct.values.sum())
+    _degenerate = {"chi2": 0.0, "p_value": 1.0, "dof": 0, "cramers_v": 0.0,
+                   "n": n, "significant": False}
+    # Need at least a 2×2 table for a meaningful test
+    if ct.shape[0] < 2 or ct.shape[1] < 2:
+        return _degenerate
+    try:
+        chi2, p, dof, _ = chi2_contingency(ct)
+    except Exception:
+        return _degenerate
+    denom = n * (min(ct.shape) - 1)
+    cramers_v = (chi2 / denom) ** 0.5 if denom > 0 else 0.0
     return {
-        "chi2": round(chi2, 3),
-        "p_value": round(p, 4),
-        "dof": dof,
-        "cramers_v": round(cramers_v, 3),
+        "chi2": round(float(chi2), 3),
+        "p_value": round(float(p), 4),
+        "dof": int(dof),
+        "cramers_v": round(float(cramers_v), 3),
         "n": n,
         "significant": p < 0.05,
     }
@@ -476,7 +486,15 @@ def anova_summary(df: pd.DataFrame, theme_col: str, numeric_col: str) -> dict:
     if len(named_groups) < 2:
         return None
     group_arrays = [g for _, g in named_groups]
-    f_stat, p_value = f_oneway(*group_arrays)
+    # ANOVA is undefined with no overall variance; f_oneway returns NaN there.
+    if np.unique(np.concatenate(group_arrays)).size < 2:
+        return None
+    try:
+        f_stat, p_value = f_oneway(*group_arrays)
+    except Exception:
+        return None
+    if not (np.isfinite(f_stat) and np.isfinite(p_value)):
+        return None
     # Use only rows from analyzed groups so grand_mean and ss_total are consistent
     group_series = [pd.Series(g) for g in group_arrays]
     all_vals = pd.concat(group_series)
@@ -509,7 +527,12 @@ def anova_posthoc(df: pd.DataFrame, theme_col: str, numeric_col: str) -> pd.Data
 
     rows = []
     for a, b in pairs:
-        _, p = ttest_ind(groups[a], groups[b], equal_var=False)
+        try:
+            _, p = ttest_ind(groups[a], groups[b], equal_var=False)
+        except Exception:
+            continue
+        if not np.isfinite(p):
+            continue
         p_adj = min(1.0, p * len(pairs))
         rows.append({
             "Theme A": a,
@@ -541,7 +564,14 @@ def normality_summary(df: pd.DataFrame, theme_col: str, numeric_col: str) -> dic
             rows.append({"Theme": name, "N": n, "W": None, "p": None, "Normal?": "—", "Note": "< 3 obs"})
             continue
         sample = vals if n <= 5000 else vals[:5000]
-        w, p = shapiro(sample)
+        if np.ptp(sample) == 0:  # all identical → Shapiro is undefined
+            rows.append({"Theme": name, "N": n, "W": None, "p": None, "Normal?": "—", "Note": "no variance"})
+            continue
+        try:
+            w, p = shapiro(sample)
+        except Exception:
+            rows.append({"Theme": name, "N": n, "W": None, "p": None, "Normal?": "—", "Note": "test failed"})
+            continue
         passes = p >= 0.05
         if not passes:
             any_fail = True
@@ -569,7 +599,16 @@ def kruskal_summary(df: pd.DataFrame, theme_col: str, numeric_col: str) -> dict 
     if len(named) < 2:
         return None
     arrays = [v for _, v in named]
-    h, p = kruskal(*arrays)
+    # Kruskal-Wallis is undefined when every value is identical (all ties) — scipy
+    # raises in that case, so bail out gracefully.
+    if np.unique(np.concatenate(arrays)).size < 2:
+        return None
+    try:
+        h, p = kruskal(*arrays)
+    except Exception:
+        return None
+    if not (np.isfinite(h) and np.isfinite(p)):
+        return None
     n_total = sum(len(a) for a in arrays)
     k = len(arrays)
     # Epsilon-squared: unbiased effect size for Kruskal-Wallis
@@ -597,7 +636,10 @@ def kruskal_posthoc(df: pd.DataFrame, theme_col: str, numeric_col: str) -> pd.Da
         return pd.DataFrame()
     rows = []
     for a, b in pairs:
-        _, p = mannwhitneyu(groups[a], groups[b], alternative="two-sided")
+        try:
+            _, p = mannwhitneyu(groups[a], groups[b], alternative="two-sided")
+        except Exception:
+            continue
         p_adj = min(1.0, p * len(pairs))
         rows.append({
             "Theme A": a,
@@ -644,7 +686,14 @@ def trend_test_summary(
     for theme in pct_pivot.columns:
         pcts = pct_pivot[theme].values
         t_idx = list(range(len(periods)))
-        res = linregress(t_idx, pcts)
+        if np.ptp(pcts) == 0:  # flat series → slope is 0, regression p is undefined
+            continue
+        try:
+            res = linregress(t_idx, pcts)
+        except Exception:
+            continue
+        if not np.isfinite(res.pvalue):
+            continue
         rows.append({
             "Theme": theme,
             "Slope (pp/period)": round(float(res.slope), 3),
