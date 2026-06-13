@@ -145,6 +145,22 @@ from analysis import (
 )
 from report import generate_notebook
 
+# Responses that carry no thematic content — forced to "None of the above" regardless of
+# what the model returns (weak models routinely hallucinate a confident theme for these,
+# especially blank cells). Matched after lowercasing + trimming surrounding punctuation.
+_UNINFORMATIVE = {
+    "", "nothing", "nothing.", "nothing really", "none", "no", "nope", "na", "n/a", "nan",
+    "nil", "nada", "good", "great", "ok", "okay", "fine", "nice", "cool", "yes", "yeah",
+    "all good", "not really", "no comment", "not applicable", "thanks", "thank you", "n a",
+}
+
+
+def _is_uninformative(text) -> bool:
+    """True for blank / non-answer responses that shouldn't be assigned a theme."""
+    t = str(text).strip().lower().strip(".!?,-_ ")
+    return len(t) <= 1 or t in _UNINFORMATIVE
+
+
 def _quote(text: str) -> None:
     """Display response text as a blockquote without markdown interpretation."""
     st.markdown(
@@ -1131,11 +1147,13 @@ elif st.session_state.step == 3:
                 st.stop()
 
             _valid_preview = {t["name"] for t in current_taxonomy}
-            def _first_valid_theme(r):
+            def _first_valid_theme(r, text):
+                if _is_uninformative(text):
+                    return NONE_THEME
                 _ths = r.get("themes") if isinstance(r, dict) else None
                 return next((th for th in (_ths or []) if isinstance(th, str) and th in _valid_preview), NONE_THEME)
             st.session_state.preview_sample = [
-                {"text": text, "primary_theme": _first_valid_theme(r)}
+                {"text": text, "primary_theme": _first_valid_theme(r, text)}
                 for text, r in zip(sample_texts, results)
             ]
             st.rerun()
@@ -1383,6 +1401,14 @@ elif st.session_state.step == 4:
                 _r.setdefault("score", None)
                 _r.setdefault("label", None)
                 _r.setdefault("emotion", None)
+                # Blank / non-answer responses are forced to None (the model can't be trusted
+                # to route these — it often invents a confident theme for an empty cell).
+                if _is_uninformative(responses[_i]):
+                    _r["themes"] = [NONE_THEME]
+                    _r["confidence"] = 1.0
+                    _r["emotion"] = None
+                    if include_valence:
+                        _r["score"], _r["label"] = 3, "Neutral"
 
             progress_bar.progress(1.0, text="Done!")
             _track("coding_completed",
