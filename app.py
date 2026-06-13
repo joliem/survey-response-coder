@@ -359,7 +359,6 @@ DEFAULTS = {
     "rerun_requested": False,
     "theme_quotes": {},       # cached representative quotes per theme (lazy-computed)
     "coding_progress": None,  # {"sig", "results", "total"} for checkpoint/resume of coding
-    "coding_active": False,   # chunked coding in progress (auto-advances via reruns)
     "_ls_sig": None,          # dedup signature for browser auto-save
     "_rendered_step": -1,
 }
@@ -1245,100 +1244,101 @@ elif st.session_state.step == 4:
         if _prog and _prog.get("sig") != _sig:
             _prog = None
             st.session_state.coding_progress = None
-            st.session_state.coding_active = False
         _done = len(_prog["results"]) if _prog else 0
         _resume = bool(_prog) and 0 < _done < _n_total
 
-        # Coding runs in chunks (one per render) so progress is auto-saved between chunks
-        # and a mid-run refresh loses at most one chunk. Demo is instant → one chunk.
-        _CHUNK = _n_total if st.session_state.demo_mode else 100
+        # Pre-run advisory.
+        _fast_provider = st.session_state.provider in ("OpenAI", "Anthropic")
+        if not st.session_state.demo_mode and _n_total > 100:
+            _batches = (_n_total + 19) // 20
+            _est_min = max(1, round(_batches * (3 if _fast_provider else 6) / 60))
+            st.warning(
+                f"Coding {_n_total:,} responses is expected to take roughly **{_est_min} min**. "
+                "Avoid refreshing the page while it runs — that loses progress. If you hit your "
+                "model's request limit, click **Resume** to continue with a different (paid) model.",
+                icon="⏱️",
+            )
 
-        def _assemble_and_finish():
-            results = st.session_state.coding_progress["results"]
-            if len(results) > _n_total:
-                results = results[:_n_total]
-            elif len(results) < _n_total:
-                results += [{"themes": [NONE_THEME], "score": None, "label": None,
-                             "emotion": None, "confidence": 0.0}] * (_n_total - len(results))
-            # Normalize + validate each result. Themes must be real taxonomy names AND strings
-            # (a flaky model can emit nested lists/dicts as "themes", which are unhashable).
-            _valid_themes = {t["name"] for t in taxonomy}
-            for _i, _r in enumerate(results):
-                if not isinstance(_r, dict):
-                    _r = {}
-                    results[_i] = _r
-                _themes = _r.get("themes")
-                _kept = [th for th in (_themes or []) if isinstance(th, str) and th in _valid_themes]
-                if not multi_theme:
-                    _kept = _kept[:1]
-                _r["themes"] = _kept or [NONE_THEME]
-                _r.setdefault("confidence", 0.5)
-                _r.setdefault("score", None)
-                _r.setdefault("label", None)
-                _r.setdefault("emotion", None)
-            _track("coding_completed",
-                   provider=st.session_state.provider, model=st.session_state.model,
-                   num_responses=_n_total, demo_mode=st.session_state.demo_mode)
-            coded_df = df.copy()
-            coded_df["theme"] = [" | ".join(r["themes"]) for r in results]
-            coded_df["primary_theme"] = [r["themes"][0] for r in results]
-            coded_df["confidence"] = [r.get("confidence", 0.5) for r in results]
-            if include_valence:
-                coded_df["valence_score"] = [r["score"] for r in results]
-                coded_df["valence_label"] = [r["label"] for r in results]
-            if include_emotion:
-                coded_df["emotion"] = [r["emotion"] for r in results]
-            st.session_state.coded_df = coded_df
-            st.session_state.coding_active = False
-            st.session_state.coding_progress = None
-            st.session_state.theme_quotes = {}
-
-        if st.session_state.coding_active and st.session_state.coding_progress:
-            # ── Active: code the next chunk, then auto-advance via rerun ──
-            prog = st.session_state.coding_progress
-            _done = len(prog["results"])
-            progress_bar = st.progress(min(_done / _n_total, 1.0),
-                                       text=f"Coding responses... {_done:,}/{_n_total:,}")
-            if st.button("⏸ Stop", key="stop_coding"):
-                st.session_state.coding_active = False
-                _autosave_to_browser()
+        _col1, _col2 = st.columns([1, 4])
+        with _col1:
+            if st.button("← Back", key="step4_back"):
+                go_to(3)
                 st.rerun()
+        with _col2:
+            if _resume:
+                _label = f"▶ Resume coding ({_n_total - _done:,} of {_n_total:,} left)"
+            else:
+                _label = "Start Coding (Demo) →" if st.session_state.demo_mode else "Start Coding →"
+            _start = st.button(_label, type="primary", use_container_width=True)
 
-            if _done >= _n_total:
-                _assemble_and_finish()
-                st.rerun()
+        if _resume:
+            st.info(
+                f"A previous run coded **{_done:,} of {_n_total:,}** responses before it stopped. "
+                "Resume to finish the rest — you can switch to a different model or provider in the "
+                "sidebar first (e.g. from a free tier that hit its daily cap).",
+                icon="↪️",
+            )
+            _rcol1, _rcol2 = st.columns(2)
+            with _rcol1:
+                if st.button("↻ Start over instead", key="step4_restart", use_container_width=True):
+                    st.session_state.coding_progress = None
+                    st.rerun()
+            with _rcol2:
+                st.download_button(
+                    "⬇ Save resume file",
+                    data=_build_resume_blob(
+                        text_col=text_col, covariate_cols=st.session_state.covariate_cols,
+                        taxonomy=taxonomy,
+                        options={"multi_theme": multi_theme, "include_valence": include_valence,
+                                 "include_emotion": include_emotion},
+                        total=_n_total, results=st.session_state.coding_progress["results"],
+                        responses=responses,
+                    ),
+                    file_name="coding_resume.json", mime="application/json",
+                    key="dl_resume_persist", use_container_width=True,
+                    help="Download progress so you can continue even if the page/session resets — "
+                         "re-upload it on the Load Data step.",
+                )
 
-            _chunk_start = _done
-            _chunk = responses[_chunk_start:_chunk_start + _CHUNK]
+        if _start:
+            if not st.session_state.demo_mode and not st.session_state.api_key:
+                st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
+                st.stop()
+
+            if not _resume:
+                st.session_state.coding_progress = {"sig": _sig, "results": [], "total": _n_total}
+            _start_index = len(st.session_state.coding_progress["results"])
+            _remaining = responses[_start_index:]
+            progress_bar = st.progress(_start_index / _n_total, text="Starting...")
 
             def _on_batch(batch_results):
-                prog["results"].extend(batch_results)
-                _d = len(prog["results"])
+                st.session_state.coding_progress["results"].extend(batch_results)
+                _d = len(st.session_state.coding_progress["results"])
                 progress_bar.progress(min(_d / _n_total, 1.0),
                                       text=f"Coding responses... {_d:,}/{_n_total:,}")
 
             try:
                 if st.session_state.demo_mode:
-                    _chunk_results = code_responses_demo(
-                        _chunk, taxonomy,
-                        df=df.iloc[_chunk_start:_chunk_start + _CHUNK].reset_index(drop=True),
+                    _demo_results = code_responses_demo(
+                        _remaining, taxonomy,
+                        df=df.iloc[_start_index:].reset_index(drop=True),
                         multi_theme=multi_theme,
                         include_valence=include_valence, include_emotion=include_emotion,
                     )
-                    _on_batch(_chunk_results)
+                    _on_batch(_demo_results)
                 else:
                     code_responses(
                         st.session_state.provider, st.session_state.model,
                         st.session_state.api_key or None,
-                        _chunk, taxonomy,
+                        _remaining, taxonomy,
                         multi_theme=multi_theme,
                         include_valence=include_valence, include_emotion=include_emotion,
                         on_batch=_on_batch,
                     )
             except Exception as _coding_err:
-                st.session_state.coding_active = False
+                progress_bar.empty()
                 _autosave_to_browser()
-                _saved = len(prog["results"])
+                _saved = len(st.session_state.coding_progress["results"])
                 st.error(
                     _friendly_api_error(_coding_err, st.session_state.provider)
                     + f"\n\n**{_saved:,} of {_n_total:,} responses are saved** (auto-backed-up to this "
@@ -1353,7 +1353,8 @@ elif st.session_state.step == 4:
                         taxonomy=taxonomy,
                         options={"multi_theme": multi_theme, "include_valence": include_valence,
                                  "include_emotion": include_emotion},
-                        total=_n_total, results=prog["results"], responses=responses,
+                        total=_n_total, results=st.session_state.coding_progress["results"],
+                        responses=responses,
                     ),
                     file_name="coding_resume.json", mime="application/json", key="dl_resume_fail",
                 )
@@ -1362,82 +1363,49 @@ elif st.session_state.step == 4:
                        error=type(_coding_err).__name__, coded_so_far=_saved)
                 st.stop()
 
-            # Chunk complete — persist to browser, then advance (or finish)
-            _autosave_to_browser()
-            if len(prog["results"]) >= _n_total:
-                _assemble_and_finish()
+            results = st.session_state.coding_progress["results"]
+            if len(results) > _n_total:
+                results = results[:_n_total]
+            elif len(results) < _n_total:
+                results += [{"themes": [NONE_THEME], "score": None, "label": None,
+                             "emotion": None, "confidence": 0.0}] * (_n_total - len(results))
+            # Normalize + validate themes (skip non-strings / JSON artifacts); single-theme enforce.
+            _valid_themes = {t["name"] for t in taxonomy}
+            for _i, _r in enumerate(results):
+                if not isinstance(_r, dict):
+                    _r = {}
+                    results[_i] = _r
+                _kept = [th for th in (_r.get("themes") or []) if isinstance(th, str) and th in _valid_themes]
+                if not multi_theme:
+                    _kept = _kept[:1]
+                _r["themes"] = _kept or [NONE_THEME]
+                _r.setdefault("confidence", 0.5)
+                _r.setdefault("score", None)
+                _r.setdefault("label", None)
+                _r.setdefault("emotion", None)
+
+            progress_bar.progress(1.0, text="Done!")
+            _track("coding_completed",
+                   provider=st.session_state.provider, model=st.session_state.model,
+                   num_responses=_n_total, demo_mode=st.session_state.demo_mode)
+            coded_df = df.copy()
+            coded_df["theme"] = [" | ".join(r["themes"]) for r in results]
+            coded_df["primary_theme"] = [r["themes"][0] for r in results]
+            coded_df["confidence"] = [r.get("confidence", 0.5) for r in results]
+            if include_valence:
+                coded_df["valence_score"] = [r["score"] for r in results]
+                coded_df["valence_label"] = [r["label"] for r in results]
+            if include_emotion:
+                coded_df["emotion"] = [r["emotion"] for r in results]
+            st.session_state.coded_df = coded_df
+            st.session_state.coding_progress = None
+            st.session_state.theme_quotes = {}
             st.rerun()
-
-        else:
-            # ── Idle: advisory + start / resume controls ──
-            _fast_provider = st.session_state.provider in ("OpenAI", "Anthropic")
-            if not st.session_state.demo_mode and _n_total > 100:
-                _batches = (_n_total + 19) // 20
-                _est_min = max(1, round(_batches * (3 if _fast_provider else 6) / 60))
-                st.warning(
-                    f"Coding {_n_total:,} responses is expected to take roughly **{_est_min} min**. "
-                    "It auto-saves to your browser as it goes, so a refresh or reset loses at most the "
-                    "last chunk. If you hit your model's request limit, click **Resume** to continue "
-                    "with a different (paid) model.",
-                    icon="⏱️",
-                )
-
-            _col1, _col2 = st.columns([1, 4])
-            with _col1:
-                if st.button("← Back", key="step4_back"):
-                    go_to(3)
-                    st.rerun()
-            with _col2:
-                if _resume:
-                    _label = f"▶ Resume coding ({_n_total - _done:,} of {_n_total:,} left)"
-                else:
-                    _label = "Start Coding (Demo) →" if st.session_state.demo_mode else "Start Coding →"
-                _start = st.button(_label, type="primary", use_container_width=True)
-
-            if _resume:
-                st.info(
-                    f"A previous run coded **{_done:,} of {_n_total:,}** responses before it stopped. "
-                    "Resume to finish the rest — you can switch to a different model or provider in the "
-                    "sidebar first (e.g. from a free tier that hit its daily cap).",
-                    icon="↪️",
-                )
-                _rcol1, _rcol2 = st.columns(2)
-                with _rcol1:
-                    if st.button("↻ Start over instead", key="step4_restart", use_container_width=True):
-                        st.session_state.coding_progress = None
-                        st.session_state.coding_active = False
-                        st.rerun()
-                with _rcol2:
-                    st.download_button(
-                        "⬇ Save resume file",
-                        data=_build_resume_blob(
-                            text_col=text_col, covariate_cols=st.session_state.covariate_cols,
-                            taxonomy=taxonomy,
-                            options={"multi_theme": multi_theme, "include_valence": include_valence,
-                                     "include_emotion": include_emotion},
-                            total=_n_total, results=st.session_state.coding_progress["results"],
-                            responses=responses,
-                        ),
-                        file_name="coding_resume.json", mime="application/json",
-                        key="dl_resume_persist", use_container_width=True,
-                        help="Download progress so you can continue even if the page/session resets — "
-                             "re-upload it on the Load Data step.",
-                    )
-
-            if _start:
-                if not st.session_state.demo_mode and not st.session_state.api_key:
-                    st.error("No API key — enter one in the sidebar or switch to Demo Mode.", icon="🔑")
-                    st.stop()
-                if not _resume:
-                    st.session_state.coding_progress = {"sig": _sig, "results": [], "total": _n_total}
-                st.session_state.coding_active = True
-                st.rerun()
     else:
         st.success(f"Coding complete — {len(st.session_state.coded_df):,} responses coded.")
         if st.button("↺ Re-run Coding with New Options", key="step4_rerun"):
             st.session_state.coded_df = None
             st.session_state.coding_progress = None
-            st.session_state.coding_active = False
             st.session_state.theme_quotes = {}
             _track("coding_rerun")
             st.rerun()
