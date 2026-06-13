@@ -1130,7 +1130,8 @@ elif st.session_state.step == 3:
 
             _valid_preview = {t["name"] for t in current_taxonomy}
             def _first_valid_theme(r):
-                return next((th for th in (r.get("themes") or []) if th in _valid_preview), NONE_THEME)
+                _ths = r.get("themes") if isinstance(r, dict) else None
+                return next((th for th in (_ths or []) if isinstance(th, str) and th in _valid_preview), NONE_THEME)
             st.session_state.preview_sample = [
                 {"text": text, "primary_theme": _first_valid_theme(r)}
                 for text, r in zip(sample_texts, results)
@@ -1256,13 +1257,22 @@ elif st.session_state.step == 4:
             elif len(results) < _n_total:
                 results += [{"themes": [NONE_THEME], "score": None, "label": None,
                              "emotion": None, "confidence": 0.0}] * (_n_total - len(results))
-            # Validate theme names against the taxonomy (drop JSON artifacts); enforce single-theme.
+            # Normalize + validate each result. Themes must be real taxonomy names AND strings
+            # (a flaky model can emit nested lists/dicts as "themes", which are unhashable).
             _valid_themes = {t["name"] for t in taxonomy}
-            for _r in results:
-                _kept = [th for th in (_r.get("themes") or []) if th in _valid_themes]
+            for _i, _r in enumerate(results):
+                if not isinstance(_r, dict):
+                    _r = {}
+                    results[_i] = _r
+                _themes = _r.get("themes")
+                _kept = [th for th in (_themes or []) if isinstance(th, str) and th in _valid_themes]
                 if not multi_theme:
                     _kept = _kept[:1]
                 _r["themes"] = _kept or [NONE_THEME]
+                _r.setdefault("confidence", 0.5)
+                _r.setdefault("score", None)
+                _r.setdefault("label", None)
+                _r.setdefault("emotion", None)
             _track("coding_completed",
                    provider=st.session_state.provider, model=st.session_state.model,
                    num_responses=_n_total, demo_mode=st.session_state.demo_mode)
