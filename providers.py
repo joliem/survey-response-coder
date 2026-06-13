@@ -596,12 +596,10 @@ def split_theme(provider, model, api_key, theme, new_name_1, new_name_2, sample_
 # ── Representative quote selection ─────────────────────────────────────────────
 
 _QUOTE_SYSTEM = (
-    "You help a researcher pull representative VERBATIM quotes from open-ended survey "
-    "responses that were already coded to a theme. Your job is SELECTION and EXTRACTION ONLY. "
-    "You must NEVER paraphrase, rewrite, fix grammar, translate, or invent text. Every quote "
-    "you return must be copied EXACTLY, word-for-word, from one of the provided responses. You "
-    "may shorten by quoting a contiguous span (a sentence or two), or join two contiguous spans "
-    "with an ellipsis (…), but you may not alter any words within a span."
+    "You help a researcher select representative responses from open-ended survey data "
+    "that was already coded to a theme. Your job is SELECTION ONLY — you pick which "
+    "responses to show; the full response text is displayed as-is. Never paraphrase, "
+    "summarise, or invent text."
 )
 
 
@@ -612,23 +610,21 @@ def _quote_user_prompt(theme, candidates, max_representative, allow_nuance):
         f'Definition: {theme.get("description", "")}\n\n'
         f"Responses coded to this theme:\n\n{listing}\n\n"
         f"Select up to {max_representative} response(s) that best REPRESENT this theme. "
-        "Prioritise quotes with substance — ones that name a specific pain point or request a "
-        "specific improvement, and that reflect the prevailing view within the theme. "
-        "Avoid generic, boilerplate, or purely procedural/legalistic text. "
+        "Prioritise responses that describe a specific experience or concrete problem. "
+        "Avoid: form-letter salutations ('To Whom It May Concern'), purely procedural/legal "
+        "citations, responses that are mostly about a different topic, and responses that read "
+        "as generic boilerplate. "
     )
     if allow_nuance:
         instr += (
-            'Additionally, you may select up to 1 response that captures a meaningful but '
-            'LESS COMMON angle within this theme — mark its role "nuance". '
+            'You may also select 1 response that captures a meaningful but less common angle '
+            'within this theme — mark its role "nuance". '
         )
     instr += (
-        "Only include a quote if it is genuinely substantive; it is better to return fewer "
-        "(even zero) than to pad with weak quotes. For each selection, extract the single most "
-        "representative verbatim excerpt (ideally 25 words or fewer, never more than ~40), "
-        "copied exactly from that response.\n\n"
+        "Only include a response if it is genuinely substantive; fewer is better than padding.\n\n"
         "Return ONLY valid JSON — no prose, no markdown fences:\n"
         '{"quotes": [{"id": <number>, "role": "representative" | "nuance", '
-        '"quote": "<verbatim excerpt>", "reason": "<why, 12 words max>"}]}'
+        '"reason": "<why this response, 12 words max>"}]}'
     )
     return instr
 

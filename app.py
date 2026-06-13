@@ -1794,8 +1794,8 @@ elif st.session_state.step == 5:
                     continue
                 for p in picks:
                     _quote(p["quote"])
-                    _label = "Less common angle" if p["role"] == "nuance" else "Representative"
-                    st.caption(_label + (f" · {p['reason']}" if p.get("reason") else ""))
+                    if p.get("reason"):
+                        st.caption(p["reason"])
                 st.write("")
 
         if st.session_state.demo_mode:

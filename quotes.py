@@ -110,10 +110,10 @@ def build_candidates(sub_df: pd.DataFrame, text_col: str,
 
 def finalize_picks(raw_picks, candidates: list[dict],
                    max_representative: int = 3, allow_nuance: bool = True) -> list[dict]:
-    """Validate + clean model/heuristic picks into the final quote list.
+    """Map model/heuristic picks to the final quote list.
 
     - Maps each pick back to a candidate by id.
-    - Verifies the excerpt is verbatim; if not, substitutes a real sentence.
+    - Shows the full response text (pre-truncated in build_candidates).
     - De-dupes by source row, enforces representative/nuance caps.
     Returns: [{"row", "role", "quote", "reason", "confidence"}], reps then nuance.
     """
@@ -132,17 +132,11 @@ def finalize_picks(raw_picks, candidates: list[dict],
         if not cand or cand["row"] in seen_rows:
             continue
 
-        quote = str(pick.get("quote", "")).strip()
-        if not validate_quote(quote, cand["text_full"]):
-            quote = extract_fallback_sentence(cand["text_full"])
-        if not quote:
-            continue
-
         role = "nuance" if str(pick.get("role", "")).lower().startswith("nuance") else "representative"
         entry = {
             "row": cand["row"],
             "role": role,
-            "quote": quote,
+            "quote": cand["text"],  # full response text (truncated at build_candidates limit)
             "reason": str(pick.get("reason", "")).strip(),
             "confidence": cand["confidence"],
         }
