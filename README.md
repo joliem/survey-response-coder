@@ -100,7 +100,10 @@ The app shows a per-run cost estimate before you start.
 
 ## Privacy
 
-This tool does not store or log any uploaded data. However, response text is transmitted to the AI provider you select (Anthropic, OpenAI, or Google) to generate the taxonomy and coding. Review your provider's API data usage policy before uploading personally identifiable, sensitive, or regulated data.
+This tool does not store or log any uploaded data on a server. However:
+
+- **AI providers:** response text is transmitted to the AI provider you select (Anthropic, OpenAI, or Google) to generate the taxonomy and coding. Review your provider's API data usage policy before uploading personally identifiable, sensitive, or regulated data.
+- **Browser auto-save:** to protect against losing work when a session is interrupted, your taxonomy and in-progress coding are saved to your browser's local storage (on your device — not transmitted anywhere). This is cleared with **Start Over**. Avoid leaving sensitive data auto-saved on a shared/public computer.
 
 ---
 

@@ -267,6 +267,64 @@ def _parse_resume_blob(data) -> dict:
     return blob
 
 
+# ── Browser auto-save (localStorage) ───────────────────────────────────────────
+# Persists taxonomy + coding progress to the user's browser so a session reset
+# (Streamlit Cloud recycling, refresh, sleep) doesn't lose work. Dependency-free:
+# uses window.parent.localStorage, same as the scroll-to-top helper.
+_LS_KEY = "survey_coder_session_v1"
+
+
+def _autosave_to_browser():
+    """Save current recoverable state to localStorage — only when it changes."""
+    import base64
+    try:
+        df = st.session_state.df
+        text_col = st.session_state.text_col
+        taxonomy = st.session_state.taxonomy
+        if df is None or not text_col or not taxonomy:
+            return
+        prog = st.session_state.coding_progress
+        results = prog["results"] if prog else []
+        # Cheap change-signature so we don't re-emit a large blob on every rerun
+        sig = (len(results), len(taxonomy), text_col,
+               bool(st.session_state.multi_theme),
+               bool(st.session_state.include_valence),
+               bool(st.session_state.include_emotion))
+        if st.session_state.get("_ls_sig") == sig:
+            return
+        responses = df[text_col].fillna("").str.strip().tolist()
+        blob = _build_resume_blob(
+            text_col=text_col, covariate_cols=st.session_state.covariate_cols,
+            taxonomy=taxonomy,
+            options={"multi_theme": st.session_state.multi_theme,
+                     "include_valence": st.session_state.include_valence,
+                     "include_emotion": st.session_state.include_emotion},
+            total=len(responses), results=results, responses=responses,
+        )
+        b64 = base64.b64encode(blob).decode()
+        _components.html(
+            f"<script>try{{window.parent.localStorage.setItem('{_LS_KEY}','{b64}');}}"
+            f"catch(e){{}}</script>",
+            height=0,
+        )
+        st.session_state._ls_sig = sig
+    except Exception:
+        pass
+
+
+def _clear_browser_save():
+    """Remove the auto-saved session from the browser (on Start Over)."""
+    try:
+        _components.html(
+            f"<script>try{{window.parent.localStorage.removeItem('{_LS_KEY}');}}"
+            f"catch(e){{}}</script>",
+            height=0,
+        )
+        st.session_state._ls_sig = None
+    except Exception:
+        pass
+
+
 st.set_page_config(
     page_title="Survey Response Coder",
     page_icon="📊",
@@ -308,6 +366,7 @@ DEFAULTS = {
     "rerun_requested": False,
     "theme_quotes": {},       # cached representative quotes per theme (lazy-computed)
     "coding_progress": None,  # {"sig", "results", "total"} for checkpoint/resume of coding
+    "_ls_sig": None,          # dedup signature for browser auto-save
     "_rendered_step": -1,
 }
 for k, v in DEFAULTS.items():
@@ -493,6 +552,7 @@ with st.sidebar:
     st.divider()
     if st.session_state.step > 1:
         if st.button("↩ Start Over", use_container_width=True):
+            _clear_browser_save()
             for k, v in DEFAULTS.items():
                 st.session_state[k] = v
             st.rerun()
@@ -512,6 +572,9 @@ if st.session_state.step >= 4 and not st.session_state.taxonomy:
     st.session_state.step = 2
 if st.session_state.step == 5 and st.session_state.coded_df is None:
     st.session_state.step = 4
+
+# Continuously back up recoverable state to the browser (survives a session reset)
+_autosave_to_browser()
 
 # Scroll to top only when navigating to a new step, not on widget re-renders
 if st.session_state._rendered_step != st.session_state.step:
@@ -633,8 +696,34 @@ designed for quantitative UX and market researchers who need to make sense of fr
 
         with st.expander("↪️ Resume an interrupted coding run"):
             st.caption(
-                "If a long coding run was interrupted (page/session reset), upload the **resume file** "
-                "you saved to pick up where it stopped. Load the **same dataset** above first."
+                "If a coding run was interrupted, pick up where it stopped. Load the **same dataset** "
+                "above first, then either recover the **auto-saved** copy from this browser or upload "
+                "a resume file you saved."
+            )
+            # Auto-recover: read the browser's auto-saved session and offer it as a download
+            # that can be fed straight into the uploader below.
+            _components.html(
+                f"""<div id="rec" style="font-family:sans-serif;font-size:14px"></div>
+                <script>
+                  try {{
+                    var d = window.parent.localStorage.getItem('{_LS_KEY}');
+                    if (d) {{
+                      var blob = new Blob([atob(d)], {{type:'application/json'}});
+                      var url = URL.createObjectURL(blob);
+                      document.getElementById('rec').innerHTML =
+                        '✅ Auto-saved progress found in this browser. '+
+                        '<a href="'+url+'" download="coding_resume.json">⬇ Download it</a>, '+
+                        'then upload it just below.';
+                    }} else {{
+                      document.getElementById('rec').innerHTML =
+                        '<span style="color:#888">No auto-saved progress found in this browser.</span>';
+                    }}
+                  }} catch(e) {{
+                    document.getElementById('rec').innerHTML =
+                      '<span style="color:#888">Browser storage unavailable here.</span>';
+                  }}
+                </script>""",
+                height=44,
             )
             _ru = st.file_uploader("Resume file (.json)", type=["json"], key="resume_uploader")
             if _ru is not None:
