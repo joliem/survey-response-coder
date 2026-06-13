@@ -9,126 +9,100 @@ import pandas as pd
 # no prior framework, 8 themes identified from patterns in the raw responses.
 DEMO_TAXONOMY = [
     {
-        "name": "Identity Theft & Fraudulent Accounts",
-        "description": "Someone opened accounts, generated charges, or created credit entries in "
-                       "the consumer's name without authorization — including data-breach victims "
-                       "invoking FCRA 605B to request blocking and deletion of fraudulent tradelines.",
+        "name": "Identity Theft and Fraudulent Accounts",
+        "description": "Complaints related to identity theft, including unauthorized accounts, "
+                       "transactions, and inquiries appearing on credit reports without the "
+                       "consumer's knowledge or consent.",
         "examples": [
-            "My personal information was stolen in XXXX, since then I've been seeing a lot of "
-            "unauthorized inquiries and accounts. I've attached a police report pertaining to the "
-            "incident. In accordance with the Fair Credit Reporting Act, multiple unauthorized "
-            "inquiries have been found on my credit report — please investigate and remove them immediately.",
-            "I am writing to formally request the immediate blocking and deletion of the fraudulent "
-            "accounts listed below from my credit file. I am a victim of a data breach, and these "
-            "items were not authorized by me.",
+            "I never gave anyone permission to pull my consumer report or to open any accounts "
+            "in my name. This is identity theft. Please remove all attached items.",
+            "I discovered that my personal information was used without my consent to open accounts "
+            "or make unauthorized purchases. I did not initiate or authorize any of the transactions "
+            "or accounts associated with my name.",
         ],
     },
     {
-        "name": "Dispute Process Failures",
-        "description": "Consumer submitted formal disputes that were ignored, rubber-stamped as "
-                       "'verified' without genuine investigation, or never responded to within the "
-                       "required 30-day window — the grievance is the broken process itself, not "
-                       "just the underlying data error.",
+        "name": "Inaccurate or Erroneous Credit Reporting",
+        "description": "Concerns regarding incorrect, outdated, or unverifiable information on "
+                       "credit reports, such as wrong payment histories, balances, or account statuses.",
         "examples": [
-            "I have disputed errors and inaccuracies on my credit report via Equifax's online "
-            "disputing service on several occasions over the past few months and they have yet to "
-            "be removed. Equifax refused to further investigate the inaccuracies I reported and "
-            "refused to transfer the call to a manager.",
-            "It has been over 30 days since my dispute was received, yet the agency failed to "
-            "provide the required reinvestigation results or any written notice explaining a delay. "
-            "This constitutes a direct violation of the Fair Credit Reporting Act.",
+            "I have always made my payments on time, yet a late payment appeared on my credit "
+            "report. The credit bureau verified it as accurate without any genuine investigation.",
+            "I submitted documentation to Experian confirming my account was in deferment while "
+            "I was still in school. Experian refused to update the account status to reflect this.",
         ],
     },
     {
-        "name": "Inaccurate Payment History & Account Data",
-        "description": "Wrong data on the consumer's own existing account: late marks the consumer "
-                       "disputes, paid accounts still showing delinquent, incorrect balances, "
-                       "accounts not updated after payoff, or personal-information errors. "
-                       "No claim that someone else opened the account.",
+        "name": "Dispute and Investigation Process Issues",
+        "description": "Issues involving failures or delays by credit bureaus or furnishers to "
+                       "properly investigate, verify, or respond to consumer disputes within "
+                       "mandated time frames.",
         "examples": [
-            "I have always made my payments on time. For some reason, I realized that there was a "
-            "late payment on my credit report. I called and was told their system automatically "
-            "put me on paperless billing, which I did not request. I tried contacting the bureaus "
-            "but they refuse to correct this error.",
-            "Standard Mortgage Corporation reported my payment as late. It was paid on time and "
-            "cleared my checking account on the due date. Attempts to dispute with the bureaus "
-            "were unsuccessful because both are stating the information was verified as 'accurate'.",
-        ],
-    },
-    {
-        "name": "Debt Collection Practices",
-        "description": "A debt collector is pursuing, reporting, or harassing over a debt the "
-                       "consumer disputes, hasn't validated, considers paid, or doesn't recognize — "
-                       "including FDCPA violations, calls to employers or neighbors, and debts "
-                       "reinserted after prior deletion.",
-        "examples": [
-            "Performant Recovery is harassing me with the amount of phone calls I receive. They "
-            "call me every day multiple times throughout the day and have called me repeatedly "
-            "before 8am. They are also calling my place of employment every day more than once "
-            "and have even faxed my employer several times.",
-            "I received a document from a law office notifying I owed a balance of $2,300 from a "
-            "previous apartment complex. I tried contacting the company on multiple occasions and "
-            "have not been able to talk to anyone, yet they continue to report this debt.",
-        ],
-    },
-    {
-        "name": "Loan & Mortgage Servicing",
-        "description": "Problems with how a servicer manages a loan: escrow mismanagement, payment "
-                       "misapplication, servicer-transfer errors, unauthorized forbearance, "
-                       "foreclosure concerns, or student-loan servicing failures including "
-                       "PSLF and income-driven repayment issues.",
-        "examples": [
-            "MOHELA has been repeatedly placing my loans into forbearance without my consent. "
-            "I have contacted MOHELA on multiple occasions to request that they stop, but they "
-            "have repeatedly ignored my requests. My auto-debit payments are not being processed, "
-            "causing my loans to remain unpaid and interest to improperly accrue.",
-            "We had an FHA loan through Flagstar Bank. During COVID we took a deferment. Instead "
-            "of adding the deferred amount to the current mortgage balance, they filed a second "
-            "lien against the property — which we only discovered years later when trying to sell.",
-        ],
-    },
-    {
-        "name": "Billing, Fees & Card Disputes",
-        "description": "Unexpected or undisclosed fees, unauthorized card transactions, billing "
-                       "errors, credit-limit reductions the consumer did not request, or "
-                       "gift-card and transfer scams where the consumer disputes liability.",
-        "examples": [
-            "I am writing to file a complaint against Navy Federal Credit Union regarding multiple "
-            "overdraft fees I have incurred despite having sufficient funds. I was charged fees "
-            "due to lagged posting of charges and credits, which aligns with recent CFPB findings "
-            "against Navy Federal for similar practices.",
-            "I went to make a purchase and found that my credit limit had been cut in half without "
-            "any notice, which greatly impacted my credit score. Customer service said they sent "
-            "a letter — they did not — and refused to reverse the change.",
-        ],
-    },
-    {
-        "name": "Account Restriction & Fund Access",
-        "description": "A bank, payment app, or digital-wallet account was unexpectedly closed, "
-                       "frozen, or suspended — leaving the consumer unable to access their own "
-                       "money. Covers banks, fintech apps (Chime, Cash App), and credit unions.",
-        "examples": [
-            "Cash App locked my account and emailed me stating I had 5 days to respond about a "
-            "transaction I never made. I replied immediately explaining I was at work overseas, "
-            "and they went ahead and closed my account without any further response.",
-            "US Bank closed my account without notice. I still had funds in the account. The "
-            "branch manager said they sent a cashiers check but refused to give a tracking number. "
-            "After weeks of follow-up I still have not received my money.",
+            "I submitted a formal dispute with documentation confirming my payments were made on "
+            "time. In response, the bureau simply stated the account was 'verified' without "
+            "explaining how any investigation was conducted.",
+            "This account continued to report on my credit report regardless of my previous "
+            "written requests. I sent a dispute letter but never received a reply within the "
+            "required 30 days.",
         ],
     },
     {
         "name": "Unauthorized Credit Inquiries",
-        "description": "Hard pulls placed on the consumer's credit file without their knowledge "
-                       "or consent — where no full account was opened. The complaint centers on "
-                       "the inquiry itself and permissible purpose under FCRA Section 604, "
-                       "distinct from broader identity theft cases.",
+        "description": "Complaints about hard credit inquiries made without consumer permission "
+                       "or knowledge, often linked to identity theft or improper practices.",
         "examples": [
-            "I applied for a personal loan and got denied, but when they pulled my credit report "
-            "3 hard inquiries were placed. I also applied for an auto loan which was also denied "
-            "and had another hard inquiry placed — none of these were disclosed upfront.",
-            "I noticed unauthorized inquiries on my credit file. I reached out to the bureau to "
-            "get them removed and was told I needed to get permission from the 'data furnisher' "
-            "before they would remove any inquiry — but they were placed without my permission.",
+            "I received a hard credit inquiry without any consent, form, request, or verbal or "
+            "written authorization. I found out when my credit monitoring alert notified me.",
+            "While checking my most recent credit report, I noticed unauthorized credit inquiries "
+            "by companies I never applied to and did not give permission to access my credit file.",
+        ],
+    },
+    {
+        "name": "Debt Collection and Validation Issues",
+        "description": "Problems related to debt collectors reporting debts without proper "
+                       "validation, requests for documentation, undue harassment, or inaccurate "
+                       "debt information.",
+        "examples": [
+            "A collection agency is reporting an account that has already been paid. They agreed "
+            "to delete it upon payment, but they are still reporting this account in collections.",
+            "I sent a dispute letter to the collection agency and they chose not only to ignore "
+            "it but to add it to my credit report — a violation of the FDCPA.",
+        ],
+    },
+    {
+        "name": "Banking and Account Access Problems",
+        "description": "Complaints about bank account issues including unauthorized transactions, "
+                       "frozen or closed accounts, delayed fund releases, or unexplained denials "
+                       "of services.",
+        "examples": [
+            "My bank denied my claim for two unauthorized transactions totaling $800 without "
+            "providing a specific explanation or the documentation used to make that determination.",
+            "My bank closed my account without notice, leaving me unable to access my funds. "
+            "Despite repeated follow-ups over several weeks, I have not received my remaining balance.",
+        ],
+    },
+    {
+        "name": "Loan Servicing and Payment Disputes",
+        "description": "Concerns related to mortgage, student, or auto loan servicing errors "
+                       "including misapplication of payments, inaccurate late payments, or "
+                       "faulty loan modifications.",
+        "examples": [
+            "I called my student loan servicer to request that my overpayments be applied to the "
+            "principal and was told that is not possible and I cannot choose where the money goes.",
+            "I became ill and called my lender to arrange a payment plan. Despite being a "
+            "long-term customer, they reported me late to the credit bureaus without notice.",
+        ],
+    },
+    {
+        "name": "Customer Service and Communication Failures",
+        "description": "Frustrations with poor customer support, lack of timely responses, unclear "
+                       "or contradictory information from financial institutions or credit bureaus.",
+        "examples": [
+            "A representative told me I could make a payment by a certain date to avoid a late "
+            "report but did not specify a cut-off time. I followed their instructions and was "
+            "still reported late.",
+            "I have repeatedly attempted to contact Equifax by phone and through their website "
+            "to place a fraud alert on my credit file, but they have refused to assist me.",
         ],
     },
 ]
@@ -136,7 +110,7 @@ DEMO_TAXONOMY = [
 # Keyword fallback rules — used when _true_theme is absent (user's own data in demo mode).
 # Ordered from most-specific to broadest; first match wins.
 _KEYWORD_RULES = [
-    ("Identity Theft & Fraudulent Accounts", [
+    ("Identity Theft and Fraudulent Accounts", [
         "identity theft", "data breach", "stolen my identity",
         "victim of identity", "victim of a data breach",
         "opened in my name", "accounts in my name",
@@ -153,15 +127,21 @@ _KEYWORD_RULES = [
         "permissible purpose", "pulled my credit without",
         "inquiries on my credit report",
     ]),
-    ("Account Restriction & Fund Access", [
+    ("Banking and Account Access Problems", [
         "account was closed without", "closed without notice", "closed without warning",
         "closed without notification", "account was shut down", "account frozen",
         "account was frozen", "frozen my account", "locked my account",
         "account was locked", "card was deactivated", "card was defunded",
         "account was deactivated", "account was suspended",
         "access to my funds", "unable to withdraw", "funds were locked",
+        "overdraft fee", "annual fee", "maintenance fee", "cash advance",
+        "unauthorized charge", "unauthorized transaction",
+        "fraudulent charge", "fraudulent transaction",
+        "double charge", "duplicate charge", "billing error",
+        "interest rate was increased", "credit limit was lowered",
+        "credit limit was reduced", "cut in half", "gift card",
     ]),
-    ("Loan & Mortgage Servicing", [
+    ("Loan Servicing and Payment Disputes", [
         "mortgage", "escrow", "loan servicer", "loan servic",
         "student loan", "auto loan", "vehicle loan", "vehicle lease",
         "refinanc", "foreclos", "loan modification", "forbear",
@@ -170,7 +150,7 @@ _KEYWORD_RULES = [
         "pslf", "public service loan", "income-driven", "income based repayment",
         "income driven repayment",
     ]),
-    ("Debt Collection Practices", [
+    ("Debt Collection and Validation Issues", [
         "debt collector", "debt collection", "collection agency",
         "collection company", "validate the debt", "debt validation",
         "alleged debt", "cease and desist", "not my debt",
@@ -179,15 +159,14 @@ _KEYWORD_RULES = [
         "calling my employer", "called my employer",
         "calling me every day", "multiple times a day",
     ]),
-    ("Billing, Fees & Card Disputes", [
-        "overdraft fee", "annual fee", "maintenance fee", "cash advance",
-        "unauthorized charge", "unauthorized transaction",
-        "fraudulent charge", "fraudulent transaction",
-        "double charge", "duplicate charge", "billing error",
-        "interest rate was increased", "credit limit was lowered",
-        "credit limit was reduced", "cut in half", "gift card",
+    ("Customer Service and Communication Failures", [
+        "no response", "never responded", "couldn't reach", "could not reach",
+        "hold for hours", "hours on hold", "transferred multiple times",
+        "contradictory information", "different answer every time",
+        "poor customer service", "unhelpful", "hung up on me",
+        "refused to help", "no one could help",
     ]),
-    ("Dispute Process Failures", [
+    ("Dispute and Investigation Process Issues", [
         "multiple disputes", "several disputes", "numerous disputes",
         "failed to investigate", "refused to investigate",
         "without investigation", "no response to my dispute",
@@ -196,7 +175,7 @@ _KEYWORD_RULES = [
         "section 611", "1681i", "reasonable investigation",
         "over 30 days", "30 days",
     ]),
-    ("Inaccurate Payment History & Account Data", [
+    ("Inaccurate or Erroneous Credit Reporting", [
         "inaccurate", "incorrect", "late payment", "late mark",
         "paid in full", "paid off", "credit report", "credit bureau",
         "credit bureaus", "fcra", "1681", "consumer report",
