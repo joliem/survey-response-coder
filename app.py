@@ -669,92 +669,93 @@ designed for quantitative UX and market researchers who need to make sense of fr
         # ── Resume (right after upload, before column config) ──
         # Auto-expands when a resume file is present; if a valid one is supplied we skip
         # Preview + Configure Columns (those are restored from the resume file).
-        _resume_file_present = st.session_state.get("resume_uploader") is not None
         _recovering = False
-        with st.expander("↪️ Resuming an interrupted coding run? Recover your progress",
-                         expanded=_resume_file_present):
-            st.caption(
-                "Re-uploaded the **same dataset** to continue an interrupted run? Recover the "
-                "auto-saved copy from this browser (or upload a resume file you saved) — your "
-                "taxonomy, columns, and options come back, so nothing needs reconfiguring."
-            )
-            _components.html(
-                f"""<div id="rec" style="font-family:sans-serif;font-size:14px"></div>
-                <script>
-                  try {{
-                    var d = window.parent.localStorage.getItem('{_LS_KEY}');
-                    if (d) {{
-                      var blob = new Blob([atob(d)], {{type:'application/json'}});
-                      var url = URL.createObjectURL(blob);
-                      document.getElementById('rec').innerHTML =
-                        '✅ Auto-saved progress found in this browser. '+
-                        '<a href="'+url+'" download="coding_resume.json">⬇ Download it</a>, '+
-                        'then upload it just below.';
-                    }} else {{
-                      document.getElementById('rec').innerHTML =
-                        '<span style="color:#888">No auto-saved progress found in this browser.</span>';
-                    }}
-                  }} catch(e) {{
-                    document.getElementById('rec').innerHTML =
-                      '<span style="color:#888">Browser storage unavailable here.</span>';
-                  }}
-                </script>""",
-                height=44,
-            )
-            _ru = st.file_uploader("Resume file (.json)", type=["json"], key="resume_uploader")
-            if _ru is not None:
-                try:
-                    _blob = _parse_resume_blob(_ru.getvalue())
-                except Exception:
-                    st.error("That doesn't look like a valid resume file.")
-                else:
-                    _tcol = _blob["text_col"]
-                    if _tcol not in df.columns:
-                        st.error(
-                            f"This resume file needs a `{_tcol}` column, which isn't in the loaded "
-                            "dataset — make sure you loaded the original file."
-                        )
-                    elif _responses_fingerprint(
-                        df[_tcol].fillna("").str.strip().tolist()
-                    ) != _blob["responses_hash"]:
-                        st.error(
-                            "This resume file doesn't match the loaded dataset. "
-                            "Load the exact same file you were coding before."
-                        )
+        if not st.session_state.demo_mode:
+            _resume_file_present = st.session_state.get("resume_uploader") is not None
+            with st.expander("↪️ Resuming an interrupted coding run? Recover your progress",
+                             expanded=_resume_file_present):
+                st.caption(
+                    "Re-uploaded the **same dataset** to continue an interrupted run? Recover the "
+                    "auto-saved copy from this browser (or upload a resume file you saved) — your "
+                    "taxonomy, columns, and options come back, so nothing needs reconfiguring."
+                )
+                _components.html(
+                    f"""<div id="rec" style="font-family:sans-serif;font-size:14px"></div>
+                    <script>
+                      try {{
+                        var d = window.parent.localStorage.getItem('{_LS_KEY}');
+                        if (d) {{
+                          var blob = new Blob([atob(d)], {{type:'application/json'}});
+                          var url = URL.createObjectURL(blob);
+                          document.getElementById('rec').innerHTML =
+                            '✅ Auto-saved progress found in this browser. '+
+                            '<a href="'+url+'" download="coding_resume.json">⬇ Download it</a>, '+
+                            'then upload it just below.';
+                        }} else {{
+                          document.getElementById('rec').innerHTML =
+                            '<span style="color:#888">No auto-saved progress found in this browser.</span>';
+                        }}
+                      }} catch(e) {{
+                        document.getElementById('rec').innerHTML =
+                          '<span style="color:#888">Browser storage unavailable here.</span>';
+                      }}
+                    </script>""",
+                    height=44,
+                )
+                _ru = st.file_uploader("Resume file (.json)", type=["json"], key="resume_uploader")
+                if _ru is not None:
+                    try:
+                        _blob = _parse_resume_blob(_ru.getvalue())
+                    except Exception:
+                        st.error("That doesn't look like a valid resume file.")
                     else:
-                        _recovering = True
-                        _done_n = len(_blob["results"])
-                        st.success(
-                            f"Resume file matches — **{_done_n:,} of {_blob['total']:,}** responses "
-                            "already coded. Taxonomy, columns, and options restored."
-                        )
-                        if st.button("Continue coding →", type="primary", key="resume_continue"):
-                            _opts = _blob["options"]
-                            st.session_state.text_col = _tcol
-                            st.session_state.covariate_cols = _blob.get("covariate_cols", [])
-                            st.session_state.taxonomy = _blob["taxonomy"]
-                            st.session_state.multi_theme = _opts.get("multi_theme", False)
-                            st.session_state.include_valence = _opts.get("include_valence", False)
-                            st.session_state.include_emotion = _opts.get("include_emotion", False)
-                            st.session_state.sentiment_enabled = (
-                                st.session_state.include_valence or st.session_state.include_emotion
+                        _tcol = _blob["text_col"]
+                        if _tcol not in df.columns:
+                            st.error(
+                                f"This resume file needs a `{_tcol}` column, which isn't in the loaded "
+                                "dataset — make sure you loaded the original file."
                             )
-                            _sig = _coding_signature(
-                                _blob["total"], _blob["taxonomy"],
-                                st.session_state.multi_theme,
-                                st.session_state.include_valence,
-                                st.session_state.include_emotion,
+                        elif _responses_fingerprint(
+                            df[_tcol].fillna("").str.strip().tolist()
+                        ) != _blob["responses_hash"]:
+                            st.error(
+                                "This resume file doesn't match the loaded dataset. "
+                                "Load the exact same file you were coding before."
                             )
-                            st.session_state.coding_progress = {
-                                "sig": _sig, "results": _blob["results"], "total": _blob["total"],
-                            }
-                            st.session_state.coded_df = None
-                            go_to(4)
-                            st.rerun()
+                        else:
+                            _recovering = True
+                            _done_n = len(_blob["results"])
+                            st.success(
+                                f"Resume file matches — **{_done_n:,} of {_blob['total']:,}** responses "
+                                "already coded. Taxonomy, columns, and options restored."
+                            )
+                            if st.button("Continue coding →", type="primary", key="resume_continue"):
+                                _opts = _blob["options"]
+                                st.session_state.text_col = _tcol
+                                st.session_state.covariate_cols = _blob.get("covariate_cols", [])
+                                st.session_state.taxonomy = _blob["taxonomy"]
+                                st.session_state.multi_theme = _opts.get("multi_theme", False)
+                                st.session_state.include_valence = _opts.get("include_valence", False)
+                                st.session_state.include_emotion = _opts.get("include_emotion", False)
+                                st.session_state.sentiment_enabled = (
+                                    st.session_state.include_valence or st.session_state.include_emotion
+                                )
+                                _sig = _coding_signature(
+                                    _blob["total"], _blob["taxonomy"],
+                                    st.session_state.multi_theme,
+                                    st.session_state.include_valence,
+                                    st.session_state.include_emotion,
+                                )
+                                st.session_state.coding_progress = {
+                                    "sig": _sig, "results": _blob["results"], "total": _blob["total"],
+                                }
+                                st.session_state.coded_df = None
+                                go_to(4)
+                                st.rerun()
 
-        # When recovering, skip Preview + Configure Columns — they're restored from the file.
-        if _recovering:
-            st.stop()
+            # When recovering, skip Preview + Configure Columns — they're restored from the file.
+            if _recovering:
+                st.stop()
 
         # ── Fresh path: Preview + Configure Columns ──
         st.subheader("Preview")
