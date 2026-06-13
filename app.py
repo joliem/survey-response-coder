@@ -1736,19 +1736,23 @@ elif st.session_state.step == 5:
         with st.expander("Coding Confidence"):
             avg_conf = covariate_df["confidence"].mean()
             low_n = (covariate_df["confidence"] < 0.5).sum()
+            st.markdown(
+                f"**Among the {len(covariate_df):,} responses assigned a theme** "
+                "(blank and *None of the above* responses are excluded, as in every analysis here):"
+            )
             st.plotly_chart(
                 confidence_box_chart(covariate_df, "primary_theme", color_map=_theme_color_map, theme_order=_theme_order),
                 use_container_width=True,
             )
             c1, c2 = st.columns(2)
             c1.metric("Mean confidence", f"{avg_conf:.2f}")
-            c2.metric("Low-confidence responses (<0.5)", f"{low_n} ({low_n / len(covariate_df) * 100:.1f}%)")
+            c2.metric("Low-confidence (<0.5)", f"{low_n} ({low_n / len(covariate_df) * 100:.1f}%)")
             st.caption(
-                "Confidence reflects the model's self-assessed certainty that the primary theme is the "
+                "Confidence is the **model's own self-assessed certainty** that the primary theme is the "
                 "best fit (1.0 = unambiguous, 0.5 = plausible but another theme could apply, "
-                "0.0 = forced fit). "
-                "Low-confidence responses are good candidates to review manually or to re-examine "
-                "whether the taxonomy needs a new theme."
+                "0.0 = forced fit) — it's a guide, not ground truth, and smaller/cheaper models tend to "
+                "be over-confident. Low-confidence responses are good candidates for manual review, or a "
+                "signal the taxonomy may need another theme."
             )
 
     # ── Representative Quotes ───────────────────────────────────
