@@ -97,6 +97,11 @@ You are an expert qualitative researcher helping build a coding taxonomy for ope
 
 Given a sample of responses, suggest {min_themes}–{max_themes} mutually exclusive and collectively exhaustive themes.
 Choose the number that best fits the actual diversity in the data — don't pad with thin themes or merge distinct ones just to hit a target.
+
+Balance matters: aim for themes that each cover a meaningful but not dominant share of responses.
+If one broad concept seems to apply to many responses, split it into 2–3 more specific sub-themes
+rather than leaving it as a single catch-all. No single theme should capture more than ~35% of responses.
+
 For each theme provide:
   - name: short label (2-5 words)
   - description: one clear sentence defining what belongs in this theme
