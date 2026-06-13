@@ -246,6 +246,57 @@ def _suggest_anthropic(model, api_key, responses, user_seeds, max_responses, min
     return [_normalize_theme(t) for t in json.loads(msg.content[0].text)["themes"]]
 
 
+# Blank / non-answer responses carry no thematic content — they're auto-coded as
+# "None of the above" and NEVER sent to the model (no tokens spent on empty cells).
+_UNINFORMATIVE = {
+    "", "nothing", "nothing.", "nothing really", "none", "no", "nope", "na", "n/a", "nan",
+    "nil", "nada", "good", "great", "ok", "okay", "fine", "nice", "cool", "yes", "yeah",
+    "all good", "not really", "no comment", "not applicable", "thanks", "thank you", "n a",
+}
+
+
+def is_uninformative(text) -> bool:
+    """True for blank / non-answer responses that carry no thematic content."""
+    t = str(text).strip().lower().strip(".!?,-_ ")
+    return len(t) <= 1 or t in _UNINFORMATIVE
+
+
+def _none_result(include_valence):
+    return {"themes": [NONE_THEME],
+            "score": 3 if include_valence else None,
+            "label": "Neutral" if include_valence else None,
+            "emotion": None, "confidence": 1.0}
+
+
+def _code_one_batch(batch, call_model, results, include_valence):
+    """Code one batch, skipping blank/non-answer responses (no API tokens spent on them).
+    Appends exactly len(batch) result dicts to `results`, in original order; skipped
+    responses get a 'None of the above' result. Retries parse failures up to 3x. If a batch
+    is entirely non-answers, the model isn't called at all."""
+    inf_idx = [i for i, r in enumerate(batch) if not is_uninformative(r)]
+    parsed = []
+    if inf_idx:
+        inf = [batch[i] for i in inf_idx]
+        numbered = "\n\n".join(f"{j+1}. {r}" for j, r in enumerate(inf))
+        for _attempt in range(3):
+            try:
+                parsed = []
+                _parse_batch(call_model(numbered, len(inf)), parsed)
+                break
+            except (ValueError, SyntaxError, KeyError, TypeError):
+                parsed = []
+                if _attempt == 2:
+                    raise
+    inf_set = set(inf_idx)
+    _it = iter(parsed)
+    for i in range(len(batch)):
+        if i in inf_set:
+            r = next(_it, None)
+            results.append(r if isinstance(r, dict) else _none_result(include_valence))
+        else:
+            results.append(_none_result(include_valence))
+
+
 def _code_anthropic(model, api_key, responses, taxonomy, batch_size,
                     progress_callback, multi_theme, include_valence, include_emotion, on_batch=None):
     client = _anthropic_client(api_key)
@@ -254,22 +305,17 @@ def _code_anthropic(model, api_key, responses, taxonomy, batch_size,
     total_batches = (len(responses) + batch_size - 1) // batch_size
     for batch_num, start in enumerate(range(0, len(responses), batch_size)):
         batch = responses[start:start + batch_size]
-        numbered = "\n\n".join(f"{i+1}. {r}" for i, r in enumerate(batch))
         before = len(results)
-        # Retry the batch on parse failure; roll back partial appends. Never skips responses.
-        for _attempt in range(3):
-            try:
-                msg = client.messages.create(
-                    model=model, max_tokens=8192,
-                    system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
-                    messages=[{"role": "user", "content": f"Code these {len(batch)} responses:\n\n{numbered}"}],
-                )
-                _parse_batch(msg.content[0].text, results)
-                break
-            except (ValueError, SyntaxError, KeyError, TypeError):
-                del results[before:]
-                if _attempt == 2:
-                    raise
+
+        def _call(numbered, n):
+            msg = client.messages.create(
+                model=model, max_tokens=8192,
+                system=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": f"Code these {n} responses:\n\n{numbered}"}],
+            )
+            return msg.content[0].text
+
+        _code_one_batch(batch, _call, results, include_valence)
         if on_batch:
             on_batch(results[before:])
         if progress_callback:
@@ -380,23 +426,16 @@ def _code_openai_compat(provider, model, api_key, responses, taxonomy, batch_siz
     total_batches = (len(responses) + batch_size - 1) // batch_size
     for batch_num, start in enumerate(range(0, len(responses), batch_size)):
         batch = responses[start:start + batch_size]
-        numbered = "\n\n".join(f"{i+1}. {r}" for i, r in enumerate(batch))
-        user_msg = f"Code these {len(batch)} responses:\n\n{numbered}"
-        if use_json_mode:
-            user_msg += '\n\nReturn a JSON object of the form {"results": [ one object per response, in order ]}.'
         before = len(results)
-        # Retry the batch on parse failure (a weak model occasionally emits bad JSON);
-        # roll back any partial appends so retries don't duplicate. Never skips responses.
-        for _attempt in range(3):
-            try:
-                raw = _strip_fences(_chat(client, model, system_text, user_msg,
-                                          max_tokens=8192, response_format=rf))
-                _parse_batch(raw, results)
-                break
-            except (ValueError, SyntaxError, KeyError, TypeError):
-                del results[before:]
-                if _attempt == 2:
-                    raise
+
+        def _call(numbered, n):
+            user_msg = f"Code these {n} responses:\n\n{numbered}"
+            if use_json_mode:
+                user_msg += '\n\nReturn a JSON object of the form {"results": [ one object per response, in order ]}.'
+            return _strip_fences(_chat(client, model, system_text, user_msg,
+                                       max_tokens=8192, response_format=rf))
+
+        _code_one_batch(batch, _call, results, include_valence)
         if on_batch:
             on_batch(results[before:])
         if progress_callback:

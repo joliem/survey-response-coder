@@ -116,7 +116,7 @@ _SCROLL_TOP = """<script>
 </script>"""
 
 from sample_data import load_sample
-from providers import suggest_themes, code_responses, split_theme, select_quotes, preflight_check, PROVIDERS, DEFAULT_MODEL, NONE_THEME
+from providers import suggest_themes, code_responses, split_theme, select_quotes, preflight_check, is_uninformative, PROVIDERS, DEFAULT_MODEL, NONE_THEME
 from demo_data import suggest_themes_demo, code_responses_demo, select_quotes_demo
 from quotes import build_candidates
 from analysis import (
@@ -144,22 +144,6 @@ from analysis import (
     irr_krippendorff_alpha,
 )
 from report import generate_notebook
-
-# Responses that carry no thematic content — forced to "None of the above" regardless of
-# what the model returns (weak models routinely hallucinate a confident theme for these,
-# especially blank cells). Matched after lowercasing + trimming surrounding punctuation.
-_UNINFORMATIVE = {
-    "", "nothing", "nothing.", "nothing really", "none", "no", "nope", "na", "n/a", "nan",
-    "nil", "nada", "good", "great", "ok", "okay", "fine", "nice", "cool", "yes", "yeah",
-    "all good", "not really", "no comment", "not applicable", "thanks", "thank you", "n a",
-}
-
-
-def _is_uninformative(text) -> bool:
-    """True for blank / non-answer responses that shouldn't be assigned a theme."""
-    t = str(text).strip().lower().strip(".!?,-_ ")
-    return len(t) <= 1 or t in _UNINFORMATIVE
-
 
 def _quote(text: str) -> None:
     """Display response text as a blockquote without markdown interpretation."""
@@ -1148,7 +1132,7 @@ elif st.session_state.step == 3:
 
             _valid_preview = {t["name"] for t in current_taxonomy}
             def _first_valid_theme(r, text):
-                if _is_uninformative(text):
+                if is_uninformative(text):
                     return NONE_THEME
                 _ths = r.get("themes") if isinstance(r, dict) else None
                 return next((th for th in (_ths or []) if isinstance(th, str) and th in _valid_preview), NONE_THEME)
@@ -1403,7 +1387,7 @@ elif st.session_state.step == 4:
                 _r.setdefault("emotion", None)
                 # Blank / non-answer responses are forced to None (the model can't be trusted
                 # to route these — it often invents a confident theme for an empty cell).
-                if _is_uninformative(responses[_i]):
+                if is_uninformative(responses[_i]):
                     _r["themes"] = [NONE_THEME]
                     _r["confidence"] = 1.0
                     _r["emotion"] = None
