@@ -606,15 +606,6 @@ designed for quantitative UX and market researchers who need to make sense of fr
             icon="🧪",
         )
 
-    # A coding run auto-saves to the browser. After a refresh/reset you land here with no
-    # dataset loaded — point returning users to recovery (the actual recover UI appears once
-    # the dataset is re-uploaded, since it has to validate against it).
-    if st.session_state.df is None:
-        st.caption(
-            "↩️ **Picking up an interrupted coding run?** Re-upload the *same* dataset below, then open "
-            "**“↪️ Resume an interrupted coding run”** to recover your auto-saved progress."
-        )
-
     st.divider()
 
     if st.session_state.demo_mode:
@@ -643,6 +634,11 @@ designed for quantitative UX and market researchers who need to make sense of fr
                     st.session_state.df = df
                 except Exception as e:
                     st.error(f"Could not read file: {e}")
+            if st.session_state.df is None:
+                st.markdown(
+                    "↪️ **Resuming an interrupted run?** Re-upload the **same file** — you'll recover "
+                    "your saved progress in the next step."
+                )
 
         with col_sample:
             st.subheader("Use the demo dataset")
@@ -658,53 +654,19 @@ designed for quantitative UX and market researchers who need to make sense of fr
     if st.session_state.df is not None:
         df = st.session_state.df
         st.divider()
-        st.subheader("Preview")
-        st.dataframe(df.head(5), use_container_width=True)
 
-        st.subheader("Configure Columns")
-        text_options = [
-            c for c in df.columns
-            if pd.api.types.is_string_dtype(df[c]) or pd.api.types.is_object_dtype(df[c])
-        ]
-        if not text_options:
-            text_options = list(df.columns)
-
-        default_text = (
-            "consumer_narrative" if "consumer_narrative" in text_options else text_options[0]
-        )
-        text_col = st.selectbox(
-            "Which column contains the open-ended responses?",
-            options=text_options,
-            index=text_options.index(default_text),
-        )
-
-        default_covariates = [
-            c for c in ["product", "company", "state", "date_submitted", "outcome"]
-            if c in df.columns and c != text_col
-        ]
-        covariate_cols = st.multiselect(
-            "Select covariate columns for cross-analysis (optional)",
-            options=[c for c in df.columns if c != text_col],
-            default=default_covariates,
-        )
-
-        n_valid = df[text_col].dropna().str.strip().ne("").sum()
-        st.caption(f"{n_valid:,} non-empty responses in '{text_col}'")
-
-        if st.button("Continue →", type="primary", use_container_width=True):
-            st.session_state.text_col = text_col
-            st.session_state.covariate_cols = covariate_cols
-            go_to(2)
-            st.rerun()
-
-        with st.expander("↪️ Resume an interrupted coding run"):
+        # ── Resume (right after upload, before column config) ──
+        # Auto-expands when a resume file is present; if a valid one is supplied we skip
+        # Preview + Configure Columns (those are restored from the resume file).
+        _resume_file_present = st.session_state.get("resume_uploader") is not None
+        _recovering = False
+        with st.expander("↪️ Resuming an interrupted coding run? Recover your progress",
+                         expanded=_resume_file_present):
             st.caption(
-                "If a coding run was interrupted, pick up where it stopped. Load the **same dataset** "
-                "above first, then either recover the **auto-saved** copy from this browser or upload "
-                "a resume file you saved."
+                "Re-uploaded the **same dataset** to continue an interrupted run? Recover the "
+                "auto-saved copy from this browser (or upload a resume file you saved) — your "
+                "taxonomy, columns, and options come back, so nothing needs reconfiguring."
             )
-            # Auto-recover: read the browser's auto-saved session and offer it as a download
-            # that can be fed straight into the uploader below.
             _components.html(
                 f"""<div id="rec" style="font-family:sans-serif;font-size:14px"></div>
                 <script>
@@ -749,12 +711,13 @@ designed for quantitative UX and market researchers who need to make sense of fr
                             "Load the exact same file you were coding before."
                         )
                     else:
+                        _recovering = True
                         _done_n = len(_blob["results"])
                         st.success(
                             f"Resume file matches — **{_done_n:,} of {_blob['total']:,}** responses "
-                            "already coded."
+                            "already coded. Taxonomy, columns, and options restored."
                         )
-                        if st.button("↪️ Continue this run", type="primary", key="resume_continue"):
+                        if st.button("Continue coding →", type="primary", key="resume_continue"):
                             _opts = _blob["options"]
                             st.session_state.text_col = _tcol
                             st.session_state.covariate_cols = _blob.get("covariate_cols", [])
@@ -777,6 +740,46 @@ designed for quantitative UX and market researchers who need to make sense of fr
                             st.session_state.coded_df = None
                             go_to(4)
                             st.rerun()
+
+        # When recovering, skip Preview + Configure Columns — they're restored from the file.
+        if _recovering:
+            st.stop()
+
+        # ── Fresh path: Preview + Configure Columns ──
+        st.subheader("Preview")
+        st.dataframe(df.head(5), use_container_width=True)
+
+        st.subheader("Configure Columns")
+        text_options = [
+            c for c in df.columns
+            if pd.api.types.is_string_dtype(df[c]) or pd.api.types.is_object_dtype(df[c])
+        ]
+        if not text_options:
+            text_options = list(df.columns)
+        default_text = (
+            "consumer_narrative" if "consumer_narrative" in text_options else text_options[0]
+        )
+        text_col = st.selectbox(
+            "Which column contains the open-ended responses?",
+            options=text_options,
+            index=text_options.index(default_text),
+        )
+        default_covariates = [
+            c for c in ["product", "company", "state", "date_submitted", "outcome"]
+            if c in df.columns and c != text_col
+        ]
+        covariate_cols = st.multiselect(
+            "Select covariate columns for cross-analysis (optional)",
+            options=[c for c in df.columns if c != text_col],
+            default=default_covariates,
+        )
+        n_valid = df[text_col].dropna().str.strip().ne("").sum()
+        st.caption(f"{n_valid:,} non-empty responses in '{text_col}'")
+        if st.button("Continue →", type="primary", use_container_width=True):
+            st.session_state.text_col = text_col
+            st.session_state.covariate_cols = covariate_cols
+            go_to(2)
+            st.rerun()
 
 
 # ============================================================
