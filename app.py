@@ -497,6 +497,18 @@ with st.sidebar:
                 "*before* you start so you're not stuck mid-run."
             )
 
+        # Quality caveat on the cheapest model of a provider (derived from pricing, so it
+        # tracks the model list). The cheapest is great for trying the workflow, but taxonomy
+        # and coding quality step up noticeably with a more capable model.
+        _prov_pricing = pinfo.get("pricing", {})
+        if selected_provider != "Google Gemini" and _prov_pricing:
+            _cheapest_id = min(_prov_pricing, key=lambda m: _prov_pricing[m].get("input", 9e9))
+            if _effective_model == _cheapest_id:
+                st.caption(
+                    "💡 Cheapest & fastest — ideal for **trying the workflow**. The **taxonomy and "
+                    "coding are noticeably better with a more capable model**; step up when quality matters."
+                )
+
         # ── API key input ──────────────────────────────────────
         _env_key = os.environ.get(_ENV_KEY_NAMES.get(selected_provider, ""), "")
         _displayed = st.session_state.api_key or _env_key
