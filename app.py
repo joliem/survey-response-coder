@@ -331,16 +331,9 @@ st.set_page_config(
     layout="wide",
 )
 
-# Inject Google Analytics via component (works on Streamlit Cloud)
-_components.html("""
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-JKFCS1EWQE"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'G-JKFCS1EWQE');
-</script>
-""", height=0)
+# (Google Analytics is tracked server-side via the Measurement Protocol — see
+#  _track_ga(). No client-side gtag component: it was redundant and re-mounted an
+#  iframe on every rerun, which interfered with page scrolling.)
 
 # --- Session state defaults ---
 DEFAULTS = {
@@ -611,6 +604,15 @@ designed for quantitative UX and market researchers who need to make sense of fr
             "No API key yet? Toggle **Demo Mode** in the sidebar to walk through the full workflow "
             "using a bundled sample of real CFPB consumer complaints — no setup required.",
             icon="🧪",
+        )
+
+    # A coding run auto-saves to the browser. After a refresh/reset you land here with no
+    # dataset loaded — point returning users to recovery (the actual recover UI appears once
+    # the dataset is re-uploaded, since it has to validate against it).
+    if st.session_state.df is None:
+        st.caption(
+            "↩️ **Picking up an interrupted coding run?** Re-upload the *same* dataset below, then open "
+            "**“↪️ Resume an interrupted coding run”** to recover your auto-saved progress."
         )
 
     st.divider()
