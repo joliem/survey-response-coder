@@ -4,6 +4,7 @@ Includes representative-quote selection (select_quotes).
 """
 
 import json
+import re
 
 # ── Registry ───────────────────────────────────────────────────────────────────
 
@@ -248,17 +249,36 @@ def _suggest_anthropic(model, api_key, responses, user_seeds, max_responses, min
 
 # Blank / non-answer responses carry no thematic content — they're auto-coded as
 # "None of the above" and NEVER sent to the model (no tokens spent on empty cells).
-_UNINFORMATIVE = {
-    "", "nothing", "nothing.", "nothing really", "none", "no", "nope", "na", "n/a", "nan",
-    "nil", "nada", "good", "great", "ok", "okay", "fine", "nice", "cool", "yes", "yeah",
-    "all good", "not really", "no comment", "not applicable", "thanks", "thank you", "n a",
+# Stored in normalized form (lowercased, punctuation/spaces removed) so variants like
+# "n/a", "n.a.", "no idea", "all good", "nothin'" all match. NOTE: this only catches
+# contentless non-answers — substantive single words ("options", "discounts", "easy")
+# are deliberately NOT here; the model is the real semantic judge for those.
+_NONE_NORMALIZED = {
+    "nothing", "nothingreally", "nothingmuch", "nothin", "none", "nonereally",
+    "no", "nope", "na", "nan", "nil", "nada", "nothingatall",
+    "good", "great", "ok", "okay", "fine", "nice", "cool", "yes", "yeah", "yep",
+    "allgood", "notreally", "notsure", "nocomment", "notapplicable",
+    "thanks", "thankyou", "noidea", "idk", "dunno", "meh",
 }
 
 
 def is_uninformative(text) -> bool:
-    """True for blank / non-answer responses that carry no thematic content."""
-    t = str(text).strip().lower().strip(".!?,-_ ")
-    return len(t) <= 1 or t in _UNINFORMATIVE
+    """True for blank / non-answer responses that carry no thematic content.
+
+    Systematic (not just an exact phrase list): normalizes punctuation/spacing, and
+    flags non-text (pure punctuation/numbers/emoji) and single-repeated-char junk.
+    """
+    t = str(text).strip().lower()
+    if len(t) == 0:
+        return True
+    if not any(ch.isalpha() for ch in t):            # pure punctuation / numbers / emoji
+        return True
+    core = re.sub(r"[^a-z0-9]", "", t)               # normalize: drop spaces + punctuation
+    if len(core) <= 1:
+        return True
+    if len(set(core)) == 1:                           # one repeated character, e.g. "xxxxxxxx"
+        return True
+    return core in _NONE_NORMALIZED
 
 
 def _none_result(include_valence):
