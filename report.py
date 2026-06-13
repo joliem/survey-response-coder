@@ -113,8 +113,7 @@ def generate_notebook(
     if quotes:
         quote_lines = [
             "## Representative Quotes\n",
-            "_Verbatim excerpts selected to capture each theme — the prevailing view plus the "
-            "occasional less-common angle._\n",
+            "_Verbatim responses selected to capture each theme._\n",
         ]
         any_quotes = False
         for theme in (theme_order or list(quotes.keys())):
@@ -124,9 +123,11 @@ def generate_notebook(
             any_quotes = True
             quote_lines.append(f"### {theme}")
             for p in picks:
-                tag = " _(less common angle)_" if p.get("role") == "nuance" else ""
                 excerpt = str(p.get("quote", "")).replace("\n", " ").strip()
-                quote_lines.append(f"> {excerpt}{tag}\n")
+                reason = str(p.get("reason", "")).strip()
+                quote_lines.append(f"> {excerpt}\n")
+                if reason:
+                    quote_lines.append(f"_{reason}_\n")
         if any_quotes:
             cells.append(_md("\n".join(quote_lines)))
 
