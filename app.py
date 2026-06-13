@@ -884,15 +884,19 @@ elif st.session_state.step == 2:
         else:
             _in_price  = _pricing["input"]
             _out_price = _pricing["output"]
-            _avg_tok = 100
-            _est = (max_for_taxonomy * _avg_tok / 1_000_000 * _in_price
-                    + 1_500 / 1_000_000 * _out_price)
-            _coding_est_lo = total_responses * _avg_tok / 1_000_000 * _in_price
-            _coding_est_hi = _coding_est_lo * 1.3
+            # Taxonomy: ~150 tok input/response (text + batch overhead) + ~1500 tok output
+            _tax_in  = max_for_taxonomy * 150 / 1_000_000 * _in_price
+            _tax_out = 1_500 / 1_000_000 * _out_price
+            _est = _tax_in + _tax_out
+            # Coding: ~200 tok input/response (text + system prompt amortised) + ~40 tok output
+            _coding_in  = total_responses * 200 / 1_000_000 * _in_price
+            _coding_out = total_responses * 40  / 1_000_000 * _out_price
+            _coding_est_lo = _coding_in + _coding_out
+            _coding_est_hi = _coding_est_lo * 1.5  # valence+emotion+multi-theme add ~50%
             _cost_note = (
                 f"Each taxonomy run samples {max_for_taxonomy:,} responses: ~\${_est:.3f} per run. "
-                f"Each coding run covers all {total_responses:,} responses: ~\${_coding_est_lo:.2f}–\${_coding_est_hi:.2f} per run. "
-                f"Prices may vary.{_pricing_link}"
+                f"Each coding run covers all {total_responses:,} responses: ~\${_coding_est_lo:.2f}–\${_coding_est_hi:.2f} per run "
+                f"(upper end with valence/emotion). Prices may vary.{_pricing_link}"
             )
         st.caption(_cost_note)
 
@@ -1266,7 +1270,7 @@ elif st.session_state.step == 4:
         _fast_provider = st.session_state.provider in ("OpenAI", "Anthropic")
         if not st.session_state.demo_mode and _n_total > 100:
             _batches = (_n_total + 19) // 20
-            _est_min = max(1, round(_batches * (3 if _fast_provider else 6) / 60))
+            _est_min = max(1, round(_batches * (10 if _fast_provider else 20) / 60))
             st.warning(
                 f"Coding {_n_total:,} responses is expected to take roughly **{_est_min} min**. "
                 "Avoid refreshing the page while it runs — that loses progress. If you hit your "

@@ -415,20 +415,184 @@ def _too_redacted(text: str) -> bool:
     return masked / len(words) > 0.15
 
 
+# Curated quotes for the CFPB demo — selected and annotated by hand to mirror what
+# the live LLM quote-selection step produces (quotes + short reason summaries).
+# Keyed by theme name; served directly so the demo shows polished, reason-annotated output.
+_DEMO_QUOTES: dict[str, list[dict]] = {
+    "Identity Theft and Fraudulent Accounts": [
+        {
+            "quote": "I discovered that my personal information was used without my consent to open "
+                     "accounts or make unauthorized purchases. I did not initiate or authorize any of "
+                     "the transactions or accounts associated with my name. I believe my identity was "
+                     "compromised through theft or fraud, and I immediately took steps to report the "
+                     "issue to the authorities and the affected companies. Despite these efforts, the "
+                     "companies involved have not fully resolved the matter or removed the fraudulent "
+                     "charges and accounts from my credit report.",
+            "reason": "Narrates unauthorized accounts and unresolved fraudulent charges on credit report.",
+        },
+        {
+            "quote": "Basically my personal information such as my credit history, account numbers and "
+                     "more importantly my social security number has been compromised. I have already "
+                     "set a credit freeze for any future credit cards that could be opened and I also "
+                     "have enrolled or will enroll on my enrollment date with equafax.",
+            "reason": "Discusses credit freeze and preventive actions after personal info compromise.",
+        },
+    ],
+    "Inaccurate or Erroneous Credit Reporting": [
+        {
+            "quote": "A charge-off from XXXX was previously removed in XXXX after I fully paid the "
+                     "account. However, it was illegally reinserted on my credit report in XX/XX/XXXX "
+                     "without notification. Under FCRA 611 ( a ) ( 5 ) ( B ), a removed negative "
+                     "account can not be re-reported unless I receive written notice within five days. "
+                     "I never received this notice. This is a violation of federal law, and I am "
+                     "reporting this to the FTC for further investigation.",
+            "reason": "Details illegal reinsertion of removed charge-off violating federal law.",
+        },
+        {
+            "quote": "I am disputing the auto loan on my credit report because the information being "
+                     "reported is clearly inaccurate. The account was charged off, and the lender "
+                     "stopped reporting at that time. Despite this, my credit report is showing monthly "
+                     "updates and charge-off entries for subsequent years. That is impossible. A "
+                     "charged-off account can not show new activity or payment history years after the "
+                     "charge-off date.",
+            "reason": "Account reports impossible activity after charge-off date.",
+        },
+    ],
+    "Dispute and Investigation Process Issues": [
+        {
+            "quote": "I sent a written dispute letter to Experian regarding inaccurate information on "
+                     "my credit report — specifically, late payments and a closed account I believe "
+                     "were reported in error. The letter was delivered and confirmed received. As of "
+                     "today, I have not received any written response, investigation results, or "
+                     "confirmation from Experian regarding my dispute. Under the Fair Credit Reporting "
+                     "Act (FCRA), specifically 15 U.S. Code 1681i(a)(1)(A), credit reporting agencies "
+                     "are required to conduct a reasonable investigation.",
+            "reason": "No response or investigation results received within required time frame.",
+        },
+        {
+            "quote": "This is my second time not receiving an update about my investigation. I have "
+                     "been wasting my hard money on stamps, letters, and ink to send out my letters. "
+                     "Its been more than 30 days and no response via mail or email and I am highly "
+                     "upset. The stuff on my report is inaccurate and unverifiable. I am a real person "
+                     "so I don't want an automatic computer response saying this is unauthorized.",
+            "reason": "No response after 30 days; expresses frustration over lack of investigation.",
+        },
+    ],
+    "Unauthorized Credit Inquiries": [
+        {
+            "quote": "Received hard credit inquiry without any consent, form, request or verbal or "
+                     "written authorization to do so. I found out when my credit monitoring alert "
+                     "notified me on this hard inquiry hit. I am not inquiring on new debt or "
+                     "soliciting for any services from any retail company as I am closing on "
+                     "refinancing for my home. This is unacceptable.",
+            "reason": "Hard inquiry without consent, discovered via credit monitoring alert.",
+        },
+        {
+            "quote": "I contacted a company regarding business funding. I confirmed with them whether "
+                     "it would be a soft or hard inquiry to check a pre-approval. The company "
+                     "responded it's only a soft inquiry for a pre-approval and that there would not "
+                     "be a hard inquiry unless I signed and accepted an offer. Shortly after I moved "
+                     "forward with the pre-approval, I received an Experian Credit alert stating that "
+                     "a hard inquiry was made on my credit report.",
+            "reason": "Expected soft inquiry; hard inquiry was made without authorization.",
+        },
+    ],
+    "Debt Collection and Validation Issues": [
+        {
+            "quote": "THIS COMPANY HAS REPORTED A NEGATIVE AND INVALID COLLECTION ACCOUNT ON MY "
+                     "CREDIT REPORT CAUSING SEVERE DAMAGE TO MY CREDIT SCORE STOPPING ME FROM "
+                     "PURCHASING A HOUSE AND I NEED IT REMOVED IMMEDIATELY! THIS ACCOUNT IS NOT MINE! "
+                     "THIS IS MY SECOND TIME CONTACTING THIS COMPANY AND THEY HAVE NOT FIXED THE ISSUE.",
+            "reason": "Invalid collection account damaging credit, unresolved after multiple contacts.",
+        },
+        {
+            "quote": "This collection account IS STILL REPORTING ON MY CREDIT REPORT. THIS WAS PAID "
+                     "DIRECTLY AND THE CREDITOR STATED THEY WOULD REMOVE THIS FROM MY CREDIT REPORT. "
+                     "HOWEVER, IT IS STILL REPORTING AS OPEN, UNRESOLVED AND AMOUNT DUE — NOT TO "
+                     "MENTION THE HARASSING CALLS FROM THIS COLLECTOR FOR AN AMOUNT THAT IS NOT OWED "
+                     "IN THE FIRST PLACE. PLEASE HELP.",
+            "reason": "Paid debt still reported as open, with continued collector harassment.",
+        },
+    ],
+    "Banking and Account Access Problems": [
+        {
+            "quote": "I am filing this complaint against Citibank regarding two unauthorized "
+                     "transactions totaling $800.00. I immediately filed a formal dispute and provided "
+                     "clear evidence that these charges were not authorized and were fraudulent. Despite "
+                     "my timely reporting, Citibank denied the claim without providing a specific "
+                     "explanation or the documentation used to reach their decision. I have contacted "
+                     "customer service more than three times to resolve this, yet the bank has failed "
+                     "to correct the error or return my funds.",
+            "reason": "Unauthorized transactions and bank dispute denial without explanation.",
+        },
+        {
+            "quote": "My bank closed my account without notice and my direct deposit was not received "
+                     "as a result. The company refused to tell me when my funds will be returned so "
+                     "my employer can reissue payment.",
+            "reason": "Account closure caused missed direct deposit without notice or explanation.",
+        },
+    ],
+    "Loan Servicing and Payment Disputes": [
+        {
+            "quote": "Chase caused my credit to be damaged by telling me to not make payments while "
+                     "they modified my loan, then when I tried to catch up, reported my payments as "
+                     "late.",
+            "reason": "Loan modification advice caused late payment credit reporting errors.",
+        },
+        {
+            "quote": "My private student loans are serviced through Nelnet. I have tried to make extra "
+                     "principal payments to one loan, yet the company has a history of misapplying the "
+                     "payments. This has resulted in significant time trying to correct the issue, and "
+                     "I now am having to fight to have interest charges corrected. I am rather "
+                     "exasperated.",
+            "reason": "Student loan servicer repeatedly misapplied extra principal payments.",
+        },
+    ],
+    "Customer Service and Communication Failures": [
+        {
+            "quote": "I have been calling my point of contact with the executive office of Wells Fargo "
+                     "and have not received a call back — that is over a month without being contacted. "
+                     "Time is of the essence; I need assistance to become current and avoid foreclosure, "
+                     "and I can not get help because nobody will return my call. That is unacceptable.",
+            "reason": "Month-long wait with no callback; at risk of foreclosure without resolution.",
+        },
+        {
+            "quote": "I called in and the rep advised that I can make a payment by a specific date to "
+                     "avoid being reported late to the credit bureau. THE REP DID NOT SPECIFY A CUT "
+                     "OFF TIME!!! The rep was providing me information that is not on my statement — "
+                     "I should not have to go back and look at the statement to clarify the time. THE "
+                     "REP SHOULD HAVE ADVISED ME OF THIS!",
+            "reason": "Rep gave incomplete payment deadline info, resulting in a late credit report.",
+        },
+    ],
+}
+
+
 def select_quotes_demo(theme, candidates, max_representative=3, allow_nuance=True):
     """Heuristic counterpart to providers.select_quotes (no API key).
 
-    Picks highest-confidence, non-redacted-heavy responses as representatives
-    and one differing-sentiment response as nuance. Full response text is shown.
+    For the CFPB demo, serves curated quotes with reason summaries (_DEMO_QUOTES).
+    Falls back to picking highest-confidence, non-redacted-heavy responses for any
+    theme not in the curated set (e.g. user's own data loaded in demo mode).
     """
-    from quotes import finalize_picks
+    theme_name = theme["name"] if isinstance(theme, dict) else str(theme)
+
+    # Serve curated quotes for the CFPB demo themes
+    curated = _DEMO_QUOTES.get(theme_name)
+    if curated:
+        return [
+            {"row": None, "role": "representative", "quote": q["quote"],
+             "reason": q["reason"], "confidence": None}
+            for q in curated[:max_representative]
+        ]
+
+    # Fallback: pick highest-confidence, non-redacted-heavy responses
     if not candidates:
         return []
-
-    # Filter responses that are too redaction-heavy to read well
+    from quotes import finalize_picks
     clean = [c for c in candidates if not _too_redacted(c["text_full"])]
     ranked = sorted(
-        clean or candidates,  # fall back to all if all are heavily redacted
+        clean or candidates,
         key=lambda c: (c.get("confidence") or 0),
         reverse=True,
     )
