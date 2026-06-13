@@ -434,6 +434,17 @@ with st.sidebar:
         if _effective_model != st.session_state.model:
             st.session_state.model = _effective_model
 
+        # Free-tier reality check, right at model choice
+        if selected_provider == "Google Gemini" and _effective_model in (
+            "gemini-2.5-flash", "gemini-2.5-flash-lite"
+        ):
+            st.caption(
+                "🆓 Great for the **taxonomy step** and **small samples**. Free daily request caps "
+                "are low (and change often), so a **full coding run will likely hit the cap** — if "
+                "your dataset is large, set up paid credits (OpenAI / Anthropic / paid Gemini) "
+                "*before* you start so you're not stuck mid-run."
+            )
+
         # ── API key input ──────────────────────────────────────
         _env_key = os.environ.get(_ENV_KEY_NAMES.get(selected_provider, ""), "")
         _displayed = st.session_state.api_key or _env_key
