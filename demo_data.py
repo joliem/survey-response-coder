@@ -385,9 +385,18 @@ def code_responses_demo(
 
         score = label = emotion = None
         if include_valence:
-            score, label = _assign_valence(text)
+            if use_precomputed and "_true_valence_label" in df.columns and pd.notna(df["_true_valence_label"].iloc[i]):
+                label = df["_true_valence_label"].iloc[i]
+                _s = df["_true_valence_score"].iloc[i] if "_true_valence_score" in df.columns else None
+                score = int(_s) if pd.notna(_s) else 3
+            else:
+                score, label = _assign_valence(text)
         if include_emotion:
-            emotion = _assign_emotion(text)
+            if use_precomputed and "_true_emotion" in df.columns:
+                _e = df["_true_emotion"].iloc[i]
+                emotion = _e if (pd.notna(_e) and str(_e).strip()) else None
+            else:
+                emotion = _assign_emotion(text)
 
         results.append({
             "themes": themes,
