@@ -1337,12 +1337,13 @@ elif st.session_state.step == 4:
                     )
             except Exception as _coding_err:
                 progress_bar.empty()
+                _autosave_to_browser()  # persist the partial to the browser before anything resets
                 _saved = len(st.session_state.coding_progress["results"])
                 st.error(
                     _friendly_api_error(_coding_err, st.session_state.provider)
-                    + f"\n\n**{_saved:,} of {_n_total:,} responses are saved.** "
-                      "Click **Resume coding** to finish now (already-coded responses won't be redone), "
-                      "or **save the resume file** below to continue later — even if this page resets.",
+                    + f"\n\n**{_saved:,} of {_n_total:,} responses are saved** (auto-backed-up to this "
+                      "browser). Click **Resume coding** to finish now, switch to a different model "
+                      "first, or save the resume file below.",
                     icon="⚠️",
                 )
                 st.download_button(
