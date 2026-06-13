@@ -329,11 +329,6 @@ def code_responses_demo(
         and "_true_theme" in df.columns
         and "_true_confidence" in df.columns
     )
-    if use_precomputed:
-        taxonomy_names = {t["name"] for t in taxonomy}
-        stored_themes = set(df["_true_theme"].dropna().unique())
-        use_precomputed = stored_themes.issubset(taxonomy_names)
-
     has_secondary = use_precomputed and "_true_theme_2" in df.columns
     taxonomy_name_set = {t["name"] for t in taxonomy}
 
@@ -343,19 +338,25 @@ def code_responses_demo(
     total = len(responses)
 
     for i, text in enumerate(responses):
+        # Per-row validity check: use precomputed only when the stored theme is in the current taxonomy.
+        # This prevents a single stale name from forcing keyword fallback across the entire batch.
+        row_precomputed = False
         if use_precomputed:
-            primary = df["_true_theme"].iloc[i]
-            confidence = float(df["_true_confidence"].iloc[i])
-        else:
+            _stored = df["_true_theme"].iloc[i]
+            if pd.notna(_stored) and _stored in taxonomy_name_set:
+                primary = _stored
+                confidence = float(df["_true_confidence"].iloc[i])
+                row_precomputed = True
+        if not row_precomputed:
             primary, confidence = _assign_theme(text, taxonomy)
 
         if multi_theme:
             themes = [primary]
-            if use_precomputed and has_secondary:
+            if row_precomputed and has_secondary:
                 secondary = df["_true_theme_2"].iloc[i]
                 if pd.notna(secondary) and secondary in taxonomy_name_set:
                     themes.append(secondary)
-            elif not use_precomputed:
+            elif not row_precomputed:
                 others = [n for n in all_theme_names if n != primary]
                 if others and rng.random() < 0.25:
                     themes.append(rng.choice(others))
@@ -364,14 +365,14 @@ def code_responses_demo(
 
         score = label = emotion = None
         if include_valence:
-            if use_precomputed and "_true_valence_label" in df.columns and pd.notna(df["_true_valence_label"].iloc[i]):
+            if row_precomputed and "_true_valence_label" in df.columns and pd.notna(df["_true_valence_label"].iloc[i]):
                 label = df["_true_valence_label"].iloc[i]
                 _s = df["_true_valence_score"].iloc[i] if "_true_valence_score" in df.columns else None
                 score = int(_s) if pd.notna(_s) else 3
             else:
                 score, label = _assign_valence(text)
         if include_emotion:
-            if use_precomputed and "_true_emotion" in df.columns:
+            if row_precomputed and "_true_emotion" in df.columns:
                 _e = df["_true_emotion"].iloc[i]
                 emotion = _e if (pd.notna(_e) and str(_e).strip()) else None
             else:
