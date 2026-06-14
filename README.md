@@ -27,7 +27,7 @@ Qualitative coding of open-ended survey responses is time-consuming and hard to 
 ## Features
 
 - **Multi-provider**: works with Anthropic (Claude), OpenAI (GPT), and Google Gemini — including Gemini's free tier
-- **Demo mode**: explore a pre-coded analysis of 500 real CFPB consumer complaint narratives — balanced 8-theme taxonomy, curated representative quotes, full charts — no API key required
+- **Demo mode**: explore a pre-coded analysis of 500 real Consumer Financial Protection Bureau complaint narratives — balanced 8-theme taxonomy, curated representative quotes, full charts — no API key required
 - **Flexible coding**: single-theme or multi-theme assignment, optional sentiment valence (1–5 scale) and emotion labels
 - **Taxonomy refinement**: edit theme names/descriptions, split themes in two, add custom themes; the suggested taxonomy is guided toward balance (~35% cap per theme)
 - **Representative quotes**: verbatim responses selected to illustrate each theme, each with a brief reason; included in the Jupyter notebook export

@@ -409,7 +409,7 @@ with st.sidebar:
     demo_toggle = st.toggle(
         "Demo Mode",
         value=st.session_state.demo_mode,
-        help="No API key needed — uses a bundled CFPB dataset with pre-run results.",
+        help="No API key needed — uses a bundled Consumer Financial Protection Bureau dataset with pre-run results.",
         key="_sidebar_demo_toggle",
     )
     if demo_toggle != st.session_state.demo_mode:
@@ -427,7 +427,7 @@ with st.sidebar:
 
     if demo_toggle:
         st.info(
-            "**Demo Mode** — shows a pre-run analysis of real CFPB consumer complaints "
+            "**Demo Mode** — shows a pre-run analysis of real Consumer Financial Protection Bureau complaints "
             "using Claude rather than live API calls. Results reflect what live mode would "
             "produce on this dataset, but won't adapt to your own data or instructions.",
             icon="🧪",
@@ -613,7 +613,7 @@ designed for quantitative UX and market researchers who need to make sense of fr
     if not st.session_state.demo_mode and not st.session_state.api_key:
         st.info(
             "No API key yet? Toggle **Demo Mode** in the sidebar to explore a pre-coded analysis "
-            "of real CFPB consumer complaints — no setup required.",
+            "of real Consumer Financial Protection Bureau complaints — no setup required.",
             icon="🧪",
         )
 
@@ -623,12 +623,12 @@ designed for quantitative UX and market researchers who need to make sense of fr
         st.subheader("Load the demo dataset")
         st.markdown(
             "Real consumer complaints from the "
-            "[CFPB Consumer Complaint Database](https://www.consumerfinance.gov/data-research/consumer-complaints/) "
+            "[Consumer Financial Protection Bureau Complaint Database](https://www.consumerfinance.gov/data-research/consumer-complaints/) "
             "— bundled with the app, no download needed."
         )
         if st.button("Load Demo Dataset", use_container_width=True, type="secondary"):
             st.session_state.df = load_sample(500)
-            st.success("Loaded 500 real CFPB complaints.")
+            st.success("Loaded 500 real Consumer Financial Protection Bureau complaints.")
     else:
         st.subheader("Upload your file")
         uploaded = st.file_uploader("CSV or Excel", type=["csv", "xlsx", "xls"])
