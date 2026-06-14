@@ -80,10 +80,12 @@ def generate_notebook(
     quotes: dict | None = None,
 ) -> bytes:
     """Return .ipynb bytes for a self-contained analysis report."""
+    _NONE = "None of the above"
     is_multi = "theme_list" in coded_df.columns
     has_conf = "confidence" in coded_df.columns
     n_resp = len(coded_df)
-    n_themes = coded_df["primary_theme"].nunique()
+    _themed_df = coded_df[coded_df["primary_theme"] != _NONE]
+    n_themes = _themed_df["primary_theme"].nunique()
 
     if not theme_order:
         theme_order = coded_df["primary_theme"].value_counts().index.tolist()
@@ -95,7 +97,7 @@ def generate_notebook(
 
     # ── Title & taxonomy ───────────────────────────────────────
     taxonomy_lines = "\n".join(f"- **{t['name']}**: {t['description']}" for t in taxonomy)
-    theme_counts = coded_df["primary_theme"].value_counts()
+    theme_counts = _themed_df["primary_theme"].value_counts()
     top_theme = theme_counts.index[0]
     top_pct = round(theme_counts.iloc[0] / n_resp * 100, 1)
     cells.append(_md(
@@ -147,7 +149,11 @@ def generate_notebook(
         "df = pd.read_csv(io.StringIO(base64.b64decode(_b64.strip()).decode()))\n"
         f"THEME_ORDER = {theme_order_repr}\n"
         "palette = px.colors.qualitative.Pastel\n"
-        "THEME_COLORS = {t: palette[i % len(palette)] for i, t in enumerate(reversed(THEME_ORDER))}\n"
+        "NONE_THEME = 'None of the above'\n"
+        "# Assign colors only to real themes (same order as the live app: rarest → palette[0]).\n"
+        "_colored = [t for t in THEME_ORDER if t != NONE_THEME]\n"
+        "THEME_COLORS = {t: palette[i % len(palette)] for i, t in enumerate(reversed(_colored))}\n"
+        "df_analysis = df[df['primary_theme'] != NONE_THEME].copy()\n"
         "VALENCE_ORDER = ['Very Negative', 'Negative', 'Neutral', 'Positive', 'Very Positive']\n"
         "VALENCE_COLORS = ['#d62728', '#ff7f0e', '#aec7e8', '#98df8a', '#2ca02c']\n"
         "EMOTION_ORDER = ['Angry','Frustrated','Disappointed','Worried','Confused','Neutral','Relieved','Satisfied']\n"
@@ -165,17 +171,18 @@ def generate_notebook(
             "Statistical analyses below use `primary_theme` (one value per response)."
         )
         count_code = (
-            "# Explode pipe-separated themes to get per-theme mention counts\n"
-            "exploded = df.copy()\n"
-            "exploded['_t'] = exploded['theme_list'].str.split(' | ', regex=False)\n"
-            "exploded = exploded.explode('_t')\n"
-            "counts = exploded['_t'].value_counts().reset_index()\n"
+            "# Explode pipe-separated themes; exclude 'None of the above' as the live app does.\n"
+            "_exploded = df_analysis.copy()\n"
+            "_exploded['_t'] = _exploded['theme_list'].str.split(' | ', regex=False)\n"
+            "_exploded = _exploded.explode('_t')\n"
+            "_exploded = _exploded[_exploded['_t'] != NONE_THEME]\n"
+            "counts = _exploded['_t'].value_counts().reset_index()\n"
             "counts.columns = ['Theme', 'Count']\n"
         )
     else:
         theme_intro = f"Most common theme: **{top_theme}** ({top_pct}% of responses)."
         count_code = (
-            "counts = df['primary_theme'].value_counts().reset_index()\n"
+            "counts = df_analysis['primary_theme'].value_counts().reset_index()\n"
             "counts.columns = ['Theme', 'Count']\n"
         )
     cells.append(_md(f"## Theme Distribution\n\n{theme_intro}"))
@@ -187,7 +194,7 @@ def generate_notebook(
         "fig = go.Figure(go.Bar(\n"
         "    x=counts['Count'], y=counts['Theme'], orientation='h',\n"
         "    text=counts['Label'], textposition='outside', textfont=dict(size=15),\n"
-        "    marker_color=[palette[i % len(palette)] for i in range(len(counts))],\n"
+        "    marker_color=[THEME_COLORS.get(t, '#c9c9c9') for t in counts['Theme']],\n"
         "))\n"
         "fig.update_layout(\n"
         "    title='Theme Distribution', showlegend=False, bargap=0.3,\n"
@@ -200,17 +207,18 @@ def generate_notebook(
 
     # ── Confidence ─────────────────────────────────────────────
     if has_conf:
-        avg_conf = round(coded_df["confidence"].mean(), 2)
-        low_n = int((coded_df["confidence"] < 0.5).sum())
+        avg_conf = round(_themed_df["confidence"].mean(), 2)
+        low_n = int((_themed_df["confidence"] < 0.5).sum())
         cells.append(_md(
             f"## Coding Confidence\n\n"
             f"Mean: **{avg_conf}** · Low-confidence responses (<0.5): **{low_n}** "
             f"({round(low_n / n_resp * 100, 1)}%).\n\n"
-            "Low-confidence responses are good candidates for manual review."
+            "Low-confidence responses are good candidates for manual review.\n\n"
+            "_Scoped to themed responses; 'None of the above' responses are excluded._"
         ))
         cells.append(_code(
             "fig = px.box(\n"
-            "    df, x='primary_theme', y='confidence', color='primary_theme',\n"
+            "    df_analysis, x='primary_theme', y='confidence', color='primary_theme',\n"
             "    color_discrete_map=THEME_COLORS,\n"
             "    category_orders={'primary_theme': THEME_ORDER},\n"
             "    title='Confidence Distribution by Theme',\n"
@@ -224,33 +232,9 @@ def generate_notebook(
             "    margin={'l': 10, 'r': 10, 't': 60, 'b': 140},\n"
             ")\n"
             "_style(fig).show()\n\n"
-            "print(f\"Mean confidence: {df['confidence'].mean():.2f}\")\n"
-            "print(f\"Low confidence (<0.5): {(df['confidence'] < 0.5).sum()} responses\")"
+            "print(f\"Mean confidence: {df_analysis['confidence'].mean():.2f}\")\n"
+            "print(f\"Low confidence (<0.5): {(df_analysis['confidence'] < 0.5).sum()} responses\")"
         ))
-
-    # ── Top words ──────────────────────────────────────────────
-    cells.append(_md("## Top Words per Theme"))
-    cells.append(_code(
-        "STOPWORDS = {\n"
-        "    'i','me','my','the','a','an','and','or','but','in','on','at','to','for','of',\n"
-        "    'with','was','is','are','be','been','have','has','had','this','that','they',\n"
-        "    'their','them','it','its','not','no','by','from','as','up','about','into',\n"
-        "    'through','when','which','who','will','would','could','should','do','did',\n"
-        "    'does','am','were','he','she','we','you','your','his','her','our','there',\n"
-        "    'then','than','so','if','also','just','more','out','after','told','called',\n"
-        "    'said','even','still','since','over','back',\n"
-        "}\n"
-        f"TEXT_COL = '{text_col}'\n\n"
-        "for theme in THEME_ORDER:\n"
-        "    sub = df[df['primary_theme'] == theme]\n"
-        "    if sub.empty:\n"
-        "        continue\n"
-        "    raw = ' '.join(sub[TEXT_COL].dropna()).lower().split()\n"
-        "    words = [w.strip('.,!?;:\\\"()[]') for w in raw\n"
-        "             if len(w) > 3 and w.strip('.,!?;:\\\"()[]') not in STOPWORDS]\n"
-        "    top = pd.Series(words).value_counts().head(10).index.tolist()\n"
-        "    print(str(theme) + ': ' + ', '.join(top))"
-    ))
 
     # ── Covariate analysis ─────────────────────────────────────
     if covariate_cols:
@@ -271,7 +255,7 @@ def generate_notebook(
 
             if cov_type == "categorical":
                 try:
-                    ct_raw = pd.crosstab(coded_df[cov], coded_df["primary_theme"])
+                    ct_raw = pd.crosstab(_themed_df[cov], _themed_df["primary_theme"])
                     chi2, p, dof, _ = chi2_contingency(ct_raw)
                     n = ct_raw.values.sum()
                     cv = round((chi2 / (n * (min(ct_raw.shape) - 1))) ** 0.5, 3)
@@ -283,8 +267,8 @@ def generate_notebook(
                 cells.append(_code(
                     # Limit to top 10 categories by frequency to keep charts readable.
                     # To show all categories, comment out the next two lines.
-                    f"_top_cats = df['{cov}'].value_counts().head(10).index\n"
-                    f"_plot_df = df[df['{cov}'].isin(_top_cats)].copy()\n\n"
+                    f"_top_cats = df_analysis['{cov}'].value_counts().head(10).index\n"
+                    f"_plot_df = df_analysis[df_analysis['{cov}'].isin(_top_cats)].copy()\n\n"
                     # Stacked bar matching covariate_stacked_bar() in analysis.py
                     f"_ct = pd.crosstab(_plot_df['{cov}'], _plot_df['primary_theme'])\n"
                     f"_pct = (_ct.div(_ct.sum(axis=1), axis=0) * 100).round(1)\n"
@@ -319,8 +303,8 @@ def generate_notebook(
                     f"fig2.update_xaxes(tickvals=list(range(len(_hct.index))), ticktext=_wrapped_x, tickangle=-30)\n"
                     f"fig2.update_layout(margin={{'l': 10, 'r': 10, 't': 60, 'b': 160}})\n"
                     f"_style(fig2).show()\n\n"
-                    # Chi-square (run on full data, not just top 10)
-                    f"_ct_full = pd.crosstab(df['{cov}'], df['primary_theme'])\n"
+                    # Chi-square (run on full themed data, not just top 10)
+                    f"_ct_full = pd.crosstab(df_analysis['{cov}'], df_analysis['primary_theme'])\n"
                     f"_chi2, _p, _dof, _ = chi2_contingency(_ct_full)\n"
                     f"_n = _ct_full.values.sum()\n"
                     f"_cv = (_chi2 / (_n * (min(_ct_full.shape) - 1))) ** 0.5\n"
@@ -331,7 +315,7 @@ def generate_notebook(
                 cells.append(_code(
                     # Box plot matching anova_box_chart()
                     f"fig = px.box(\n"
-                    f"    df, x='primary_theme', y='{cov}', color='primary_theme',\n"
+                    f"    df_analysis, x='primary_theme', y='{cov}', color='primary_theme',\n"
                     f"    color_discrete_map=THEME_COLORS,\n"
                     f"    category_orders={{'primary_theme': THEME_ORDER}},\n"
                     f"    title='Distribution of {cov} by Theme', points='outliers',\n"
@@ -345,7 +329,7 @@ def generate_notebook(
                     f"_style(fig).show()\n\n"
                     # Auto normality → ANOVA or Kruskal-Wallis
                     f"_groups = {{name: g['{cov}'].dropna().values\n"
-                    f"           for name, g in df.groupby('primary_theme')\n"
+                    f"           for name, g in df_analysis.groupby('primary_theme')\n"
                     f"           if g['{cov}'].dropna().shape[0] > 2}}\n"
                     f"_any_fail = any(shapiro(v).pvalue < 0.05 for v in _groups.values() if len(v) >= 3)\n"
                     f"if _any_fail:\n"
@@ -391,9 +375,9 @@ def generate_notebook(
 
             else:  # date
                 cells.append(_code(
-                    f"df['_date'] = pd.to_datetime(df['{cov}'], errors='coerce')\n"
-                    f"df['_period'] = df['_date'].dt.to_period('M').dt.start_time\n"
-                    f"_grouped = df.groupby(['_period', 'primary_theme']).size().reset_index(name='count')\n"
+                    f"df_analysis['_date'] = pd.to_datetime(df_analysis['{cov}'], errors='coerce')\n"
+                    f"df_analysis['_period'] = df_analysis['_date'].dt.to_period('M').dt.start_time\n"
+                    f"_grouped = df_analysis.groupby(['_period', 'primary_theme']).size().reset_index(name='count')\n"
                     f"_grouped['pct'] = (_grouped['count'] /\n"
                     f"    _grouped.groupby('_period')['count'].transform('sum') * 100).round(1)\n"
                     f"_rev_order = list(reversed(THEME_ORDER))\n"
@@ -415,17 +399,17 @@ def generate_notebook(
 
     # ── Valence ────────────────────────────────────────────────
     if include_valence and "valence_score" in coded_df.columns:
-        avg_val = round(coded_df["valence_score"].mean(), 2)
+        avg_val = round(_themed_df["valence_score"].mean(), 2)
         cells.append(_md(
             f"## Valence Analysis\n\n"
             f"Mean valence: **{avg_val} / 5** (1 = Very Negative → 5 = Very Positive)\n\n"
-            f"Median: **{coded_df['valence_score'].median()} / 5**"
+            f"Median: **{_themed_df['valence_score'].median()} / 5**"
         ))
         cells.append(_code(
             # Overall distribution — matches sentiment_distribution_chart()
-            "_val_order = [l for l in VALENCE_ORDER if l in df['valence_label'].values]\n"
+            "_val_order = [l for l in VALENCE_ORDER if l in df_analysis['valence_label'].values]\n"
             "_val_colors = dict(zip(VALENCE_ORDER, VALENCE_COLORS))\n"
-            "_val_counts = df['valence_label'].value_counts().reindex(_val_order).fillna(0).reset_index()\n"
+            "_val_counts = df_analysis['valence_label'].value_counts().reindex(_val_order).fillna(0).reset_index()\n"
             "_val_counts.columns = ['Valence', 'Count']\n"
             "fig = go.Figure(go.Bar(\n"
             "    x=_val_counts['Valence'], y=_val_counts['Count'],\n"
@@ -441,7 +425,7 @@ def generate_notebook(
             "_style(fig).show()\n\n"
             # By theme box — matches sentiment_by_theme_chart()
             "fig2 = px.box(\n"
-            "    df, x='primary_theme', y='valence_score', color='primary_theme',\n"
+            "    df_analysis, x='primary_theme', y='valence_score', color='primary_theme',\n"
             "    color_discrete_map=THEME_COLORS,\n"
             "    category_orders={'primary_theme': THEME_ORDER},\n"
             "    title='Valence Score by Theme  (1 = Very Negative → 5 = Very Positive)',\n"
@@ -464,7 +448,7 @@ def generate_notebook(
         ))
         cells.append(_code(
             "_vg = {name: g['valence_score'].dropna().values\n"
-            "       for name, g in df.groupby('primary_theme')\n"
+            "       for name, g in df_analysis.groupby('primary_theme')\n"
             "       if g['valence_score'].dropna().shape[0] > 2}\n"
             "_vfail = any(shapiro(v).pvalue < 0.05 for v in _vg.values() if len(v) >= 3)\n"
             "if _vfail:\n"
@@ -512,7 +496,7 @@ def generate_notebook(
         cells.append(_md("## Emotion Analysis"))
         cells.append(_code(
             # Overall distribution — matches emotion_distribution_chart()
-            "_emo_df = df[df['emotion'].notna() & (df['emotion'].str.strip() != '')].copy()\n"
+            "_emo_df = df_analysis[df_analysis['emotion'].notna() & (df_analysis['emotion'].str.strip() != '')].copy()\n"
             "_emo_order = [e for e in EMOTION_ORDER if e in _emo_df['emotion'].values]\n"
             "_emo_colors = dict(zip(EMOTION_ORDER, EMOTION_COLORS))\n"
             "_emo_counts = _emo_df['emotion'].value_counts().reindex(_emo_order).fillna(0).reset_index()\n"
@@ -529,7 +513,7 @@ def generate_notebook(
             ")\n"
             "_style(fig).show()\n\n"
             # By theme — matches emotion_by_theme_chart() (denominator = all responses per theme)
-            "_theme_totals = df.groupby('primary_theme').size()\n"
+            "_theme_totals = df_analysis.groupby('primary_theme').size()\n"
             "_labeled = _emo_df\n"
             "_emo_ct = pd.crosstab(_labeled['primary_theme'], _labeled['emotion'])\n"
             "_emo_pct = (_emo_ct.div(_theme_totals, axis=0) * 100).round(1)\n"
