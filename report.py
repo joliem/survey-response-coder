@@ -167,7 +167,7 @@ def generate_notebook(
     # ── Theme distribution ─────────────────────────────────────
     if is_multi:
         theme_intro = (
-            "Chart shows theme **mentions** (multi-theme: a response can appear in multiple bars). "
+            "Chart shows **theme tags** — each response can contribute to more than one bar. "
             "Statistical analyses below use `primary_theme` (one value per response)."
         )
         count_code = (
@@ -178,17 +178,19 @@ def generate_notebook(
             "_exploded = _exploded[_exploded['_t'] != NONE_THEME]\n"
             "counts = _exploded['_t'].value_counts().reset_index()\n"
             "counts.columns = ['Theme', 'Count']\n"
+            "_denom = counts['Count'].sum()  # % of total theme tags\n"
         )
     else:
         theme_intro = f"Most common theme: **{top_theme}** ({top_pct}% of responses)."
         count_code = (
             "counts = df_analysis['primary_theme'].value_counts().reset_index()\n"
             "counts.columns = ['Theme', 'Count']\n"
+            "_denom = len(df)  # % of all responses (including 'None of the above')\n"
         )
     cells.append(_md(f"## Theme Distribution\n\n{theme_intro}"))
     cells.append(_code(
         f"{count_code}"
-        "counts['Pct'] = (counts['Count'] / counts['Count'].sum() * 100).round(1)\n"
+        "counts['Pct'] = (counts['Count'] / _denom * 100).round(1)\n"
         "counts['Label'] = counts.apply(lambda r: f\"{r['Count']} ({r['Pct']}%)\", axis=1)\n"
         "counts = counts.sort_values('Count')  # ascending — largest bar ends at top\n\n"
         "fig = go.Figure(go.Bar(\n"

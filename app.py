@@ -1709,14 +1709,21 @@ elif st.session_state.step == 5:
             f"(most relevant) per response to preserve statistical independence.",
             icon="ℹ️",
         )
+    _chart_total = len(analysis_df) if is_multi else _total
     st.plotly_chart(
-        theme_bar_chart(analysis_df, _chart_col, color_map=_theme_color_map, total=_total),
+        theme_bar_chart(analysis_df, _chart_col, color_map=_theme_color_map, total=_chart_total),
         use_container_width=True,
     )
-    st.caption(
-        f"Each bar shows the count and its share of all {_total:,} responses. "
-        "Blank and unmatched ('None of the above') responses are excluded — see below."
-    )
+    if is_multi:
+        st.caption(
+            f"Each bar shows the tag count and its share of all {_chart_total:,} theme tags. "
+            "Blank and 'None of the above' responses are excluded — see below."
+        )
+    else:
+        st.caption(
+            f"Each bar shows the count and its share of all {_total:,} responses. "
+            "Blank and 'None of the above' responses are excluded — see below."
+        )
 
     # Notes for the excluded buckets
     _excluded_notes = []
