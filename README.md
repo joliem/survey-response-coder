@@ -7,6 +7,7 @@ An AI-assisted qualitative coding tool for open-ended survey responses, built wi
 ![Refine taxonomy](screenshots/01%20refine%20taxonomy.png)
 ![Theme distribution](screenshots/02%20theme%20distribution.png)
 ![Covariate analysis](screenshots/03%20covariate%20analysis.png)
+![Trend analysis](screenshots/04%20trend%20analysis.png)
 
 ---
 
