@@ -14,23 +14,25 @@ An AI-assisted qualitative coding tool for open-ended survey responses, built wi
 
 Qualitative coding of open-ended survey responses is time-consuming and hard to scale. This tool uses large language models to:
 
-1. **Generate a taxonomy** — the model reads a sample of your responses and proposes a set of mutually exclusive, collectively exhaustive themes
+1. **Generate a taxonomy** — the model reads a sample of your responses and proposes a set of mutually exclusive, collectively exhaustive themes, balanced so no single theme dominates
 2. **Let you refine it** — add, rename, merge, split, or rewrite themes before committing
 3. **Code every response** — each response is assigned one or more themes, with confidence scores
-4. **Analyze results** — built-in charts for theme distribution, sentiment, cross-tabulations by covariates, statistical tests (chi-square, ANOVA, Kruskal-Wallis), and inter-rater reliability
-5. **Export** — download coded data as CSV/Excel, or generate a Jupyter notebook with the full analysis
+4. **Analyze results** — built-in charts for theme distribution, sentiment, cross-tabulations by covariates, and statistical tests
+5. **Surface representative quotes** — the model selects verbatim responses that best illustrate each theme, with a one-line rationale for each pick
+6. **Export** — download coded data as CSV or a self-contained Jupyter notebook with all charts and statistical tests embedded
 
 ---
 
 ## Features
 
 - **Multi-provider**: works with Anthropic (Claude), OpenAI (GPT), and Google Gemini — including Gemini's free tier
-- **Demo mode**: explore a pre-run analysis of real CFPB consumer complaint data without any API key
+- **Demo mode**: explore a pre-coded analysis of 500 real CFPB consumer complaint narratives — balanced 8-theme taxonomy, curated representative quotes, full charts — no API key required
 - **Flexible coding**: single-theme or multi-theme assignment, optional sentiment valence (1–5 scale) and emotion labels
-- **Taxonomy refinement**: edit theme names/descriptions, split themes in two, add custom themes
-- **Statistical analysis**: chi-square tests for theme × covariate relationships, ANOVA/Kruskal-Wallis for continuous outcomes, trend tests for ordinal variables
+- **Taxonomy refinement**: edit theme names/descriptions, split themes in two, add custom themes; the suggested taxonomy is guided toward balance (~35% cap per theme)
+- **Representative quotes**: verbatim responses selected to illustrate each theme, each with a brief reason; included in the Jupyter notebook export
+- **Statistical analysis**: chi-square for theme × categorical covariate relationships, ANOVA/Kruskal-Wallis for continuous outcomes, linear trend tests for time-series covariates; post-hoc pairwise comparisons with Bonferroni correction
 - **Inter-rater reliability**: built-in IRR workflow with Cohen's Kappa and Krippendorff's Alpha
-- **Cost estimates**: per-run cost shown before you commit, with links to each provider's pricing page
+- **Cost estimates**: per-run cost estimate shown before you start, with links to each provider's pricing page
 
 ---
 
@@ -81,7 +83,7 @@ Costs depend on dataset size, model, and number of iterations. As a rough guide 
 - **Claude Haiku 4.5**: ~$0.03 per coding run
 - **Gemini (free tier)**: great for generating the taxonomy and coding small / test runs (a few hundred responses), but free daily request caps make it unsuitable for coding large datasets — use a paid model for those
 
-The app shows a per-run cost estimate before you start.
+The app shows a per-run cost and time estimate before you start.
 
 > **Note on large runs:** coding is a long sequence of API calls. On free-tier models (rate-throttled) and free hosting (which can reset a long-running session), large runs are best done on a fast paid model, in smaller subsets, or in chunks.
 
