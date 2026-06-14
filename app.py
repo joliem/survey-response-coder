@@ -612,8 +612,8 @@ designed for quantitative UX and market researchers who need to make sense of fr
 
     if not st.session_state.demo_mode and not st.session_state.api_key:
         st.info(
-            "No API key yet? Toggle **Demo Mode** in the sidebar to walk through the full workflow "
-            "using a bundled sample of real CFPB consumer complaints — no setup required.",
+            "No API key yet? Toggle **Demo Mode** in the sidebar to explore a pre-coded analysis "
+            "of real CFPB consumer complaints — no setup required.",
             icon="🧪",
         )
 
@@ -630,37 +630,23 @@ designed for quantitative UX and market researchers who need to make sense of fr
             st.session_state.df = load_sample(500)
             st.success("Loaded 500 real CFPB complaints.")
     else:
-        col_upload, col_sample = st.columns([1, 1], gap="large")
-
-        with col_upload:
-            st.subheader("Upload your own file")
-            uploaded = st.file_uploader("CSV or Excel", type=["csv", "xlsx", "xls"])
-            if uploaded:
-                try:
-                    if uploaded.name.endswith((".xlsx", ".xls")):
-                        df = pd.read_excel(uploaded)
-                    else:
-                        df = pd.read_csv(uploaded)
-                    st.success(f"Loaded {len(df):,} rows · {len(df.columns)} columns")
-                    st.session_state.df = df
-                except Exception as e:
-                    st.error(f"Could not read file: {e}")
-            if st.session_state.df is None:
-                st.markdown(
-                    "↪️ **Resuming an interrupted run?** Re-upload the **same file** — you'll recover "
-                    "your saved progress in the next step."
-                )
-
-        with col_sample:
-            st.subheader("Use the demo dataset")
+        st.subheader("Upload your file")
+        uploaded = st.file_uploader("CSV or Excel", type=["csv", "xlsx", "xls"])
+        if uploaded:
+            try:
+                if uploaded.name.endswith((".xlsx", ".xls")):
+                    df = pd.read_excel(uploaded)
+                else:
+                    df = pd.read_csv(uploaded)
+                st.success(f"Loaded {len(df):,} rows · {len(df.columns)} columns")
+                st.session_state.df = df
+            except Exception as e:
+                st.error(f"Could not read file: {e}")
+        if st.session_state.df is None:
             st.markdown(
-                "Real consumer complaints from the "
-                "[CFPB Consumer Complaint Database](https://www.consumerfinance.gov/data-research/consumer-complaints/) "
-                "— bundled with the app, no download needed."
+                "↪️ **Resuming an interrupted run?** Re-upload the **same file** — you'll recover "
+                "your saved progress in the next step."
             )
-            if st.button("Load Demo Dataset", use_container_width=True, type="secondary"):
-                st.session_state.df = load_sample(500)
-                st.success("Loaded 500 real CFPB complaints.")
 
     if st.session_state.df is not None:
         df = st.session_state.df
